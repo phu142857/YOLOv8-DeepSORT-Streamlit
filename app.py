@@ -55,8 +55,9 @@ else:
 # load pretrained DL model
 try:
     model = load_model(model_path)
-except Exception as e:
+except Exception:
     st.error(f"Unable to load model. Please check the specified path: {model_path}")
+    st.stop()
 
 # image/video options
 st.sidebar.header("Image/Video Config")
