@@ -11,8 +11,16 @@ from shared.schemas import JobArtifactsResponse
 router = APIRouter(prefix="/api/v1/jobs", tags=["artifacts"])
 
 ARTIFACT_TYPES = frozenset(
-    {"processed", "detections", "tracking", "manifest", "export", "aggregates", "log"}
+    {"processed", "preview", "detections", "tracking", "manifest", "export", "aggregates", "log"}
 )
+
+_MEDIA_TYPES = {
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
 
 
 def _get_store() -> ArtifactStore:
@@ -48,4 +56,5 @@ def download_artifact(job_id: str, artifact_type: str) -> FileResponse:
     if path is None or not path.exists():
         raise HTTPException(status_code=404, detail="artifact not found")
 
-    return FileResponse(path, filename=path.name)
+    media_type = _MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media_type, filename=path.name)

@@ -106,7 +106,23 @@ class JobStore:
     def get(self, job_id: str) -> JobResponse | None:
         with self._lock:
             job = self._jobs.get(job_id)
-            return job.model_copy() if job else None
+            if job is not None:
+                return job.model_copy()
+        if settings.persist_jobs:
+            record = self._job_record_path(job_id)
+            if record.exists():
+                try:
+                    with record.open(encoding="utf-8") as f:
+                        data = json.load(f)
+                    data["created_at"] = _parse_dt(data["created_at"])
+                    data["updated_at"] = _parse_dt(data["updated_at"])
+                    job = JobResponse(**data)
+                    with self._lock:
+                        self._jobs[job_id] = job
+                    return job.model_copy()
+                except Exception as exc:
+                    logger.warning("Failed to load job %s from disk: %s", job_id, exc)
+        return None
 
     def list_jobs(self, limit: int = 50) -> list[JobResponse]:
         with self._lock:
@@ -129,6 +145,8 @@ class JobStore:
         mlair_dataset_id: str | None = None,
         mlair_dataset_version_id: str | None = None,
         mlair_readiness: dict[str, Any] | None = None,
+        mlair_training: dict[str, Any] | None = None,
+        mlair_model_version: dict[str, Any] | None = None,
     ) -> JobResponse | None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -159,6 +177,10 @@ class JobStore:
                 data["mlair_dataset_version_id"] = mlair_dataset_version_id
             if mlair_readiness is not None:
                 data["mlair_readiness"] = mlair_readiness
+            if mlair_training is not None:
+                data["mlair_training"] = mlair_training
+            if mlair_model_version is not None:
+                data["mlair_model_version"] = mlair_model_version
             data["updated_at"] = _utc_now()
             updated = JobResponse(**data)
             self._jobs[job_id] = updated

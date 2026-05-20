@@ -7,6 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
     libgl1 \
     libglib2.0-0 \
     libgomp1 \

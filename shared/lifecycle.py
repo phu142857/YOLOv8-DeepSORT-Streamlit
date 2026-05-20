@@ -54,7 +54,15 @@ def build_job_lifecycle(job: JobResponse, store: ArtifactStore | None = None) ->
         )
     )
 
-    worker_order = ("detection", "tracking", "aggregation", "export", "mlair_ingest", "mlair_readiness")
+    worker_order = (
+        "detection",
+        "tracking",
+        "aggregation",
+        "export",
+        "mlair_ingest",
+        "mlair_readiness",
+        "mlair_train",
+    )
     for name in worker_order:
         step_file = layout["steps"] / f"{name}.json"
         if not step_file.exists():
@@ -94,6 +102,33 @@ def build_job_lifecycle(job: JobResponse, store: ArtifactStore | None = None) ->
                 status="done" if ready else "blocked",
                 detail=r.get("status", ""),
                 payload=r,
+            )
+        )
+
+    if job.mlair_training:
+        tr = job.mlair_training
+        run = tr.get("run") or {}
+        status = str(run.get("status") or tr.get("trigger", {}).get("status") or "")
+        success = bool(run.get("_poll_success"))
+        steps.append(
+            LifecycleStep(
+                id="training.run",
+                label="Training run",
+                status="done" if success else ("failed" if run.get("_poll_terminal") else "pending"),
+                detail=f"run={tr.get('run_id', '')[:12]}… {status}".strip(),
+                payload=tr,
+            )
+        )
+
+    if job.mlair_model_version:
+        mv = job.mlair_model_version
+        steps.append(
+            LifecycleStep(
+                id="model.promoted",
+                label="Model version promoted",
+                status="done",
+                detail=f"v{mv.get('version', '?')} · {mv.get('stage', '')}",
+                payload=mv if isinstance(mv, dict) else {},
             )
         )
 

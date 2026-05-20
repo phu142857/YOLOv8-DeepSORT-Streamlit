@@ -11,6 +11,7 @@ import cv2
 
 import config
 from inference.engine import load_model, predict_frame, resolve_model_path
+from inference.video_export import transcode_mp4_for_browser
 from shared.artifacts import ArtifactStore
 from shared.schemas import ArtifactManifest
 from shared.settings import settings
@@ -66,6 +67,7 @@ def process_video_job(
     frame_idx = 0
     frames_extracted = 0
     started = time.perf_counter()
+    last_plotted = None
 
     try:
         while True:
@@ -81,6 +83,7 @@ def process_video_job(
                 break
 
             plotted, detections, counters_in, counters_out = predict_frame(model, frame, confidence)
+            last_plotted = plotted
             writer.write(plotted)
 
             store.append_jsonl(detections_path, {"frame": frame_idx, "detections": detections})
@@ -102,6 +105,11 @@ def process_video_job(
     finally:
         cap.release()
         writer.release()
+
+    if last_plotted is not None:
+        cv2.imwrite(str(layout["output"] / "preview.jpg"), last_plotted)
+    if out_path.is_file() and frame_idx > 0:
+        transcode_mp4_for_browser(out_path)
 
     elapsed = time.perf_counter() - started
     aggregates = {
@@ -181,6 +189,7 @@ def process_frames_dir_job(
     tracking_path = layout["tracking"] / "tracks.jsonl"
     total = len(frame_paths)
     started = time.perf_counter()
+    last_plotted = None
 
     try:
         for frame_idx, frame_path in enumerate(frame_paths):
@@ -190,6 +199,7 @@ def process_frames_dir_job(
             if frame is None:
                 continue
             plotted, detections, counters_in, counters_out = predict_frame(model, frame, confidence)
+            last_plotted = plotted
             writer.write(plotted)
             store.append_jsonl(detections_path, {"frame": frame_idx, "detections": detections})
             store.append_jsonl(
@@ -200,6 +210,11 @@ def process_frames_dir_job(
                 on_progress((frame_idx + 1) / total, f"frame {frame_idx + 1}/{total}")
     finally:
         writer.release()
+
+    if out_path.is_file():
+        transcode_mp4_for_browser(out_path)
+    if last_plotted is not None:
+        cv2.imwrite(str(layout["output"] / "preview.jpg"), last_plotted)
 
     elapsed = time.perf_counter() - started
     aggregates_path = layout["aggregates"] / "counts.json"

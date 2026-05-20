@@ -40,6 +40,14 @@ class Settings:
     mlair_auto_materialize: bool = _env_bool("CV_MLAIR_AUTO_MATERIALIZE", True)
     mlair_hub_url: str = _env("CV_MLAIR_HUB_URL", "http://localhost:38080")
     client_save_to_dataset: bool = _env_bool("CV_CLIENT_SAVE_TO_DATASET", True)
+    mlair_model_id: str = _env("CV_MLAIR_MODEL_ID", "")
+    mlair_auto_train: bool = _env_bool("CV_MLAIR_AUTO_TRAIN", False)
+    mlair_auto_promote: bool = _env_bool("CV_MLAIR_AUTO_PROMOTE", False)
+    mlair_train_fail_pipeline: bool = _env_bool("CV_MLAIR_TRAIN_FAIL_PIPELINE", False)
+    mlair_train_poll_timeout_sec: float = float(_env("CV_MLAIR_TRAIN_POLL_TIMEOUT_SEC", "3600"))
+    mlair_train_poll_interval_sec: float = float(_env("CV_MLAIR_TRAIN_POLL_INTERVAL_SEC", "10"))
+    mlair_promote_stage: str = _env("CV_MLAIR_PROMOTE_STAGE", "production")
+    mlair_weights_cache_dir: Path = Path(_env("CV_MLAIR_WEIGHTS_CACHE_DIR", "weights/registry"))
 
     video_extensions: frozenset[str] = frozenset(
         {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}

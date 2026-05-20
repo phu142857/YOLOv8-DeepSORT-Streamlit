@@ -51,6 +51,8 @@ class JobResponse(BaseModel):
     mlair_dataset_id: str | None = None
     mlair_dataset_version_id: str | None = None
     mlair_readiness: dict[str, Any] = Field(default_factory=dict)
+    mlair_training: dict[str, Any] = Field(default_factory=dict)
+    mlair_model_version: dict[str, Any] = Field(default_factory=dict)
 
 
 class UploadResponse(BaseModel):
@@ -113,3 +115,16 @@ class JobLifecycleResponse(BaseModel):
     job_id: str
     job_status: str
     steps: list[LifecycleStep] = Field(default_factory=list)
+
+
+class RegistryModelOption(BaseModel):
+    model_id: str
+    name: str = ""
+    registry_value: str
+    production_version: int | None = None
+    artifact_uri: str | None = None
+
+
+class RegistryModelsResponse(BaseModel):
+    configured: bool = False
+    items: list[RegistryModelOption] = Field(default_factory=list)

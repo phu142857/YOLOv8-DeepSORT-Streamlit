@@ -4,9 +4,20 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from pydantic import BaseModel
+
 from mlair_adapter.dataset_client import DatasetClient
+from mlair_adapter.model_client import ModelClient
 from mlair_adapter.readiness_client import ReadinessClient, normalize_readiness
+from mlair_adapter.training_client import TrainingClient
 from shared.schemas import MLAirReadinessResponse
+from shared.settings import settings
+
+
+class TriggerTrainingRequest(BaseModel):
+    model_id: str
+    dataset_id: str
+    dataset_version_id: str | None = None
 
 router = APIRouter(prefix="/api/v1/mlair", tags=["mlair"])
 
@@ -99,3 +110,43 @@ def evaluate_readiness(
         source="cv_workload",
     )
     return _to_readiness_response(dataset_id, normalized, version_hint=dataset_version_id)
+
+
+@router.post("/runs/trigger")
+def trigger_training(body: TriggerTrainingRequest) -> dict:
+    """Proxy for Hub/tooling — primary train path is worker `mlair_train` after readiness."""
+    client = TrainingClient()
+    if not client.enabled:
+        raise HTTPException(status_code=503, detail="MLAir not configured")
+    return client.trigger_run_by_model(
+        body.model_id,
+        body.dataset_id,
+        dataset_version_id=body.dataset_version_id,
+        context={"source": "cv_api_proxy"},
+    )
+
+
+@router.get("/runs/{run_id}")
+def get_training_run(run_id: str) -> dict:
+    client = TrainingClient()
+    if not client.enabled:
+        raise HTTPException(status_code=503, detail="MLAir not configured")
+    return client.get_run(run_id)
+
+
+@router.post("/models/{model_id}/promote")
+def promote_model(model_id: str, version: int, stage: str = "production") -> dict:
+    client = ModelClient()
+    if not client.enabled:
+        raise HTTPException(status_code=503, detail="MLAir not configured")
+    return client.promote(model_id, version, stage=stage)
+
+
+@router.get("/training/config")
+def training_config() -> dict:
+    return {
+        "model_id": settings.mlair_model_id or None,
+        "auto_train": settings.mlair_auto_train,
+        "auto_promote": settings.mlair_auto_promote,
+        "promote_stage": settings.mlair_promote_stage,
+    }

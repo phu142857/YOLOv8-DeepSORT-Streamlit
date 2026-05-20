@@ -19,6 +19,7 @@ from workers import (
     ExportWorker,
     MLAirIngestWorker,
     MLAirReadinessWorker,
+    MLAirTrainWorker,
     TrackingWorker,
 )
 from workers.base import WorkerContext
@@ -32,16 +33,18 @@ WORKER_CHAIN = [
     ExportWorker(),
     MLAirIngestWorker(),
     MLAirReadinessWorker(),
+    MLAirTrainWorker(),
 ]
 
 # Progress budget per worker (sums to ~1.0)
 _PROGRESS_WEIGHTS = {
-    "detection": 0.55,
-    "tracking": 0.08,
-    "aggregation": 0.08,
-    "export": 0.07,
-    "mlair_ingest": 0.12,
-    "mlair_readiness": 0.10,
+    "detection": 0.50,
+    "tracking": 0.07,
+    "aggregation": 0.07,
+    "export": 0.06,
+    "mlair_ingest": 0.10,
+    "mlair_readiness": 0.08,
+    "mlair_train": 0.12,
 }
 
 
@@ -175,6 +178,8 @@ def run_job_pipeline(
             mlair_dataset_version_id=mlair_meta.get("dataset_version_id")
             or (job_meta.mlair_dataset_version_id if job_meta else None),
             mlair_readiness=ctx.metadata.get("mlair_readiness") or {},
+            mlair_training=ctx.metadata.get("mlair_training") or {},
+            mlair_model_version=ctx.metadata.get("mlair_model_version") or {},
         )
     except InterruptedError:
         _log(artifact_store, job_id, "pipeline interrupted (cancelled)")

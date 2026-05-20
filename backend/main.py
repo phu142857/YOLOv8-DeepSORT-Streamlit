@@ -8,7 +8,6 @@ import uuid
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routes import artifacts, frames, jobs, lifecycle, mlair, uploads
 from shared.artifacts import ArtifactStore
 from shared.job_store import init_job_store
 from shared.settings import settings
@@ -18,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 artifact_store = ArtifactStore()
 init_job_store(artifact_store)
+
+# Import routes after init_job_store so all modules share the same JobStore instance.
+from backend.routes import artifacts, frames, jobs, lifecycle, mlair, registry, uploads  # noqa: E402
 
 app = FastAPI(
     title="CV Lifecycle Workload API",
@@ -39,6 +41,7 @@ app.include_router(artifacts.router)
 app.include_router(frames.router)
 app.include_router(mlair.router)
 app.include_router(lifecycle.router)
+app.include_router(registry.router)
 
 
 @app.middleware("http")
@@ -67,6 +70,8 @@ def health() -> dict:
 def runtime_config() -> dict:
     return {
         "mlair_configured": bool(settings.mlair_api_url and settings.mlair_token),
+        "mlair_auto_train": settings.mlair_auto_train,
+        "mlair_model_id": settings.mlair_model_id or None,
         "mlair_api_url": settings.mlair_api_url or None,
         "artifact_root": str(settings.artifact_root),
         "api_base_url": settings.api_base_url,

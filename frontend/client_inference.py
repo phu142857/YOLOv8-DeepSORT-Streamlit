@@ -53,26 +53,74 @@ def show_job_results(api: CVApiClient, job: JobResponse) -> None:
 
     processed = job.artifact_manifest.get("processed_video", "")
     suffix = Path(processed).suffix.lower() if processed else ".mp4"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        api.download_artifact(job.id, "processed", Path(tmp.name))
-        if suffix in settings.image_extensions:
-            st.image(tmp.name, caption="Detected", width="stretch")
-        else:
-            st.video(tmp.name)
+
+    if suffix in settings.image_extensions:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                api.download_artifact(job.id, "processed", Path(tmp.name))
+                st.image(tmp.name, caption="Detected", width="stretch")
+        except Exception as exc:
+            st.warning(f"Could not load image: {exc}")
+        return
+
+    video_shown = False
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            dest = Path(tmp.name)
+            api.download_artifact(job.id, "processed", dest)
+            if dest.stat().st_size > 1024:
+                st.video(str(dest))
+                video_shown = True
+    except Exception as exc:
+        st.caption(f"Video download failed: {exc}")
+
+    if not video_shown:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as ptmp:
+                api.download_artifact(job.id, "preview", Path(ptmp.name))
+                st.image(ptmp.name, caption="Detection preview (last frame)", width="stretch")
+        except Exception:
+            st.info(
+                "Video preview is not available in this browser (codec). "
+                "Rebuild cv-api with ffmpeg and run a new job, or open MLAir Hub for artifacts."
+            )
 
 
 def show_dataset_feedback(api: CVApiClient, job: JobResponse) -> None:
     """Brief user message: buffer ingest + optional new dataset version."""
+    if job.status != JobStatus.COMPLETED:
+        return
     if not settings.client_save_to_dataset:
+        st.caption("Dataset save is disabled (`CV_CLIENT_SAVE_TO_DATASET=0`).")
         return
     if not job.mlair_dataset_id:
-        st.caption("Dataset sync disabled or MLAir not configured.")
+        try:
+            mlair = api.mlair_status()
+            if not mlair.get("configured"):
+                st.warning(
+                    "MLAir is not configured on cv-api. Set `CV_MLAIR_API_URL` and "
+                    "`CV_MLAIR_TOKEN` on the **cv-api** service, then restart."
+                )
+            else:
+                st.warning(
+                    "Job finished but frames were not pushed to MLAir "
+                    "(ingest skipped or failed — check cv-api logs / `artifacts/jobs/.../logs/`)."
+                )
+        except Exception:
+            st.caption("Could not verify MLAir status.")
         return
 
     st.success("Frames saved to MLAir dataset buffer.")
     if job.mlair_dataset_version_id:
         st.info(f"New dataset version created: `{job.mlair_dataset_version_id}`")
-    else:
+    if job.mlair_training:
+        run_id = job.mlair_training.get("run_id", "")
+        run_status = (job.mlair_training.get("run") or {}).get("status", "")
+        st.caption(f"Training run: `{run_id[:16]}…` — {run_status}" if run_id else "")
+    if job.mlair_model_version:
+        mv = job.mlair_model_version
+        st.caption(f"Model promoted: v{mv.get('version')} → {mv.get('stage')}")
+    if not job.mlair_dataset_version_id:
         try:
             buf = api.mlair_get_buffer(job.mlair_dataset_id)
             current = buf.get("current_size", buf.get("record_count", 0))

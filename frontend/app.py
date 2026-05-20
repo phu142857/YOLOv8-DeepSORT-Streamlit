@@ -10,6 +10,7 @@ import streamlit as st
 
 import config
 from frontend.api_client import CVApiClient
+from shared.model_resolve import is_registry_model
 from frontend.client_inference import (
     render_image_client,
     render_video_client,
@@ -34,7 +35,21 @@ health = api.health()
 api_online = health is not None
 
 st.sidebar.header("Model")
-model_type = st.sidebar.selectbox("Select Model", config.DETECTION_MODEL_LIST)
+model_options = list(config.DETECTION_MODEL_LIST)
+if api_online:
+    try:
+        reg = api.list_registry_models()
+        if reg.configured:
+            for item in reg.items:
+                label = f"[MLAir] {item.name} (prod v{item.production_version or '?'})"
+                model_options.append(label)
+                # map display label → registry value via session key
+                st.session_state.setdefault("_registry_map", {})[label] = item.registry_value
+    except Exception:
+        pass
+
+model_label = st.sidebar.selectbox("Select Model", model_options)
+model_type = st.session_state.get("_registry_map", {}).get(model_label, model_label)
 confidence = float(st.sidebar.slider("Confidence", 30, 100, 50)) / 100
 
 st.sidebar.header("Source")
@@ -61,10 +76,11 @@ if not settings.client_save_to_dataset or not settings.mlair_auto_ingest:
         "`CV_MLAIR_AUTO_INGEST=1`, and configure MLAir API credentials."
     )
 
-model_path = Path(config.DETECTION_MODEL_DIR, str(model_type))
-if not model_path.exists():
-    st.error(f"Model not found: {model_path}")
-    st.stop()
+if not is_registry_model(model_type):
+    model_path = Path(config.DETECTION_MODEL_DIR, str(model_type))
+    if not model_path.exists():
+        st.error(f"Model not found: {model_path}")
+        st.stop()
 
 if source_selectbox == config.SOURCES_LIST[0]:
     render_image_client(api, model_type, confidence)

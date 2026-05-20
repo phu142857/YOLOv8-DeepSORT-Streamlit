@@ -149,9 +149,21 @@ class ArtifactStore:
         if artifact_type == "export":
             p = layout["base"] / "export.json"
             return p if p.exists() else None
+        if artifact_type == "preview":
+            preview = layout["output"] / "preview.jpg"
+            return preview if preview.is_file() else None
         if artifact_type == "processed":
-            for ext in ("*.mp4", "*.avi", "*.jpg", "*.jpeg", "*.png"):
-                matches = list(layout["output"].glob(ext))
+            manifest = self.load_manifest(job_id)
+            if manifest and manifest.processed_video:
+                candidate = self.root / manifest.processed_video
+                if candidate.is_file():
+                    return candidate
+            for name in ("processed.mp4", "processed.jpg", "processed.png"):
+                candidate = layout["output"] / name
+                if candidate.is_file():
+                    return candidate
+            for ext in ("*.mp4", "*.avi", "*.mov", "*.jpg", "*.jpeg", "*.png"):
+                matches = sorted(layout["output"].glob(ext))
                 if matches:
                     return matches[0]
             return None

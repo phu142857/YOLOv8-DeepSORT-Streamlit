@@ -14,6 +14,7 @@ from shared.schemas import (
     JobLifecycleResponse,
     JobResponse,
     JobStatus,
+    RegistryModelsResponse,
 )
 from shared.settings import settings
 
@@ -100,6 +101,9 @@ class CVApiClient:
     def artifact_url(self, job_id: str, artifact_type: str) -> str:
         return f"{self.base_url}/api/v1/jobs/{job_id}/artifacts/{artifact_type}"
 
+    def frame_url(self, job_id: str, frame_name: str) -> str:
+        return f"{self.base_url}/api/v1/jobs/{job_id}/frames/{frame_name}"
+
     def mlair_status(self) -> dict[str, Any]:
         r = httpx.get(f"{self.base_url}/api/v1/mlair/status", timeout=10.0)
         r.raise_for_status()
@@ -119,6 +123,11 @@ class CVApiClient:
         r = httpx.get(f"{self.base_url}/api/v1/mlair/datasets/{dataset_id}/buffer", timeout=30.0)
         r.raise_for_status()
         return r.json()
+
+    def list_registry_models(self) -> RegistryModelsResponse:
+        r = httpx.get(f"{self.base_url}/api/v1/registry/models", timeout=30.0)
+        r.raise_for_status()
+        return RegistryModelsResponse(**r.json())
 
     def get_job_lifecycle(self, job_id: str) -> JobLifecycleResponse:
         r = httpx.get(f"{self.base_url}/api/v1/jobs/{job_id}/lifecycle", timeout=30.0)

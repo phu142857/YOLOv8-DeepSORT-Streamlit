@@ -10,7 +10,7 @@ import numpy as np
 from ultralytics import YOLO
 
 import config
-from shared.settings import settings
+from shared.model_resolve import resolve_model_path as _resolve_model_path
 
 
 @lru_cache(maxsize=4)
@@ -19,16 +19,7 @@ def load_model(model_path: str) -> YOLO:
 
 
 def resolve_model_path(model_name: str) -> Path:
-    path = Path(model_name)
-    if path.exists():
-        return path
-    candidate = settings.detection_model_dir / model_name
-    if candidate.exists():
-        return candidate
-    legacy = Path(config.DETECTION_MODEL_DIR) / model_name
-    if legacy.exists():
-        return legacy
-    return candidate
+    return _resolve_model_path(model_name)
 
 
 def predict_frame(

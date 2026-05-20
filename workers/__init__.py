@@ -6,6 +6,7 @@ from workers.detection_worker import DetectionWorker
 from workers.export_worker import ExportWorker
 from workers.mlair_ingest_worker import MLAirIngestWorker
 from workers.mlair_readiness_worker import MLAirReadinessWorker
+from workers.mlair_train_worker import MLAirTrainWorker
 from workers.tracking_worker import TrackingWorker
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "ExportWorker",
     "MLAirIngestWorker",
     "MLAirReadinessWorker",
+    "MLAirTrainWorker",
 ]
