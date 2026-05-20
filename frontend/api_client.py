@@ -14,6 +14,7 @@ from shared.schemas import (
     JobLifecycleResponse,
     JobResponse,
     JobStatus,
+    LocalModelsResponse,
     RegistryModelsResponse,
 )
 from shared.settings import settings
@@ -128,6 +129,11 @@ class CVApiClient:
         r = httpx.get(f"{self.base_url}/api/v1/registry/models", timeout=30.0)
         r.raise_for_status()
         return RegistryModelsResponse(**r.json())
+
+    def list_local_models(self) -> LocalModelsResponse:
+        r = httpx.get(f"{self.base_url}/api/v1/models/local", timeout=30.0)
+        r.raise_for_status()
+        return LocalModelsResponse(**r.json())
 
     def get_job_lifecycle(self, job_id: str) -> JobLifecycleResponse:
         r = httpx.get(f"{self.base_url}/api/v1/jobs/{job_id}/lifecycle", timeout=30.0)

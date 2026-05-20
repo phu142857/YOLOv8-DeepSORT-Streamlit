@@ -25,7 +25,7 @@ class SourceType(str, Enum):
 
 class JobCreate(BaseModel):
     source_type: SourceType = SourceType.VIDEO
-    model_name: str = "yolov8n.pt"
+    model_name: str = "yolov8n/base"
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     upload_id: str | None = None
     mlair_dataset_id: str | None = None
@@ -129,3 +129,18 @@ class RegistryModelOption(BaseModel):
 class RegistryModelsResponse(BaseModel):
     configured: bool = False
     items: list[RegistryModelOption] = Field(default_factory=list)
+
+
+class LocalModelOption(BaseModel):
+    """Checkpoint under ``weights/detection/{model}/{version}/``."""
+
+    model: str
+    version: str
+    spec: str  # model/version — stored in job.model_name
+    label: str = ""
+    weights_path: str = ""
+
+
+class LocalModelsResponse(BaseModel):
+    root: str = ""
+    items: list[LocalModelOption] = Field(default_factory=list)

@@ -29,20 +29,22 @@ ROOT = root_path.relative_to(Path.cwd())
 SOURCES_LIST = ["Image", "Video", "Webcam"]
 
 
-# DL model config
-DETECTION_MODEL_DIR = ROOT / 'weights' / 'detection'
-YOLOv8n = DETECTION_MODEL_DIR / "yolov8n.pt"
-YOLOv8s = DETECTION_MODEL_DIR / "yolov8s.pt"
-YOLOv8m = DETECTION_MODEL_DIR / "yolov8m.pt"
-YOLOv8l = DETECTION_MODEL_DIR / "yolov8l.pt"
-YOLOv8x = DETECTION_MODEL_DIR / "yolov8x.pt"
+# DL model config — layout: weights/detection/{model}/{version}/weights.pt
+DETECTION_MODEL_DIR = ROOT / "weights" / "detection"
+DEFAULT_MODEL_SPEC = "yolov8n/base"
 
+# Legacy flat paths (optional); prefer model/version folders.
+YOLOv8n = DETECTION_MODEL_DIR / "yolov8n" / "base" / "weights.pt"
+YOLOv8x = DETECTION_MODEL_DIR / "yolov8x" / "base" / "weights.pt"
+
+# Fallback list when API discovery is unavailable (UI only).
 DETECTION_MODEL_LIST = [
-    "yolov8n.pt",
-    "yolov8s.pt",
-    "yolov8m.pt",
-    "yolov8l.pt",
-    "yolov8x.pt"]
+    "yolov8n/base",
+    "yolov8s/base",
+    "yolov8m/base",
+    "yolov8l/base",
+    "yolov8x/base",
+]
 
 
 OBJECT_COUNTER = None

@@ -23,7 +23,7 @@ class Settings:
     api_port: int = int(_env("CV_API_PORT", "8000"))
     api_base_url: str = _env("CV_API_BASE_URL", "http://127.0.0.1:8000")
     detection_model_dir: Path = Path(_env("CV_DETECTION_MODEL_DIR", "weights/detection"))
-    default_model: str = _env("CV_DEFAULT_MODEL", "yolov8n.pt")
+    default_model: str = _env("CV_DEFAULT_MODEL", "yolov8n/base")
     frame_extract_interval: int = int(_env("CV_FRAME_EXTRACT_INTERVAL", "30"))
     max_upload_mb: int = int(_env("CV_MAX_UPLOAD_MB", "500"))
     max_video_frames: int = int(_env("CV_MAX_VIDEO_FRAMES", "0"))  # 0 = no limit

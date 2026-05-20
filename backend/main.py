@@ -19,7 +19,7 @@ artifact_store = ArtifactStore()
 init_job_store(artifact_store)
 
 # Import routes after init_job_store so all modules share the same JobStore instance.
-from backend.routes import artifacts, frames, jobs, lifecycle, mlair, registry, uploads  # noqa: E402
+from backend.routes import artifacts, frames, jobs, lifecycle, mlair, models, registry, uploads  # noqa: E402
 
 app = FastAPI(
     title="CV Lifecycle Workload API",
@@ -42,6 +42,7 @@ app.include_router(frames.router)
 app.include_router(mlair.router)
 app.include_router(lifecycle.router)
 app.include_router(registry.router)
+app.include_router(models.router)
 
 
 @app.middleware("http")

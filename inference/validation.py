@@ -16,7 +16,8 @@ def validate_model(model_name: str) -> Path:
     path = resolve_model_path(model_name)
     if not path.is_file():
         raise ValidationError(
-            f"Model weights not found: {model_name} (looked in {settings.detection_model_dir})"
+            f"Model weights not found: {model_name} "
+            f"(expected {settings.detection_model_dir}/<model>/<version>/weights.pt)"
         )
     return path
 

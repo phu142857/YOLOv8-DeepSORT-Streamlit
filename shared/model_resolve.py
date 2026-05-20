@@ -8,6 +8,7 @@ from pathlib import Path
 import config
 from mlair_adapter.model_client import ModelClient
 from shared.settings import settings
+from shared.weights_catalog import resolve_local_weights
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +55,18 @@ def resolve_model_path(model_name: str) -> Path:
     if is_registry_model(model_name):
         return ensure_registry_weights(registry_model_id(model_name))
 
-    path = Path(model_name)
-    if path.exists():
-        return path
-    candidate = settings.detection_model_dir / model_name
-    if candidate.exists():
-        return candidate
-    legacy = Path(config.DETECTION_MODEL_DIR) / model_name
-    if legacy.exists():
-        return legacy
-    return candidate
+    roots = [settings.detection_model_dir, Path(config.DETECTION_MODEL_DIR)]
+    seen: set[Path] = set()
+    last_exc: FileNotFoundError | None = None
+    for root in roots:
+        root = Path(root).resolve()
+        if root in seen:
+            continue
+        seen.add(root)
+        try:
+            return resolve_local_weights(root, model_name)
+        except FileNotFoundError as exc:
+            last_exc = exc
+    if last_exc is not None:
+        raise last_exc
+    raise FileNotFoundError(f"model not found: {model_name}")
