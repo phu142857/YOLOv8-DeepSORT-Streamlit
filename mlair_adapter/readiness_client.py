@@ -67,6 +67,14 @@ class ReadinessClient(MLAirClient):
             params["policy_id"] = policy_id
         url = f"{self.base_url}{self._prefix()}/datasets/{dataset_id}/readiness/evaluate"
         r = httpx.post(url, headers=self._headers(), params=params, timeout=self.timeout)
+        if r.status_code == 422:
+            body = r.json() if r.content else {}
+            nested = body.get("detail") if isinstance(body, dict) else None
+            reason = nested.get("reason") if isinstance(nested, dict) else None
+            if reason == "DATASET_VERSION_REQUIRED" or body.get("detail") == "dataset_version_id_required":
+                raise ValueError(
+                    "dataset_version_id_required: pin dataset_version_id or wait until accumulation materializes a version"
+                ) from None
         r.raise_for_status()
         raw = r.json() if r.content else {}
         return normalize_readiness(raw)

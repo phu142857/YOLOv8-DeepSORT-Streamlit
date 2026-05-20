@@ -51,6 +51,7 @@ class JobResponse(BaseModel):
     mlair_dataset_id: str | None = None
     mlair_dataset_version_id: str | None = None
     mlair_readiness: dict[str, Any] = Field(default_factory=dict)
+    mlair_ingest: dict[str, Any] = Field(default_factory=dict)
     mlair_training: dict[str, Any] = Field(default_factory=dict)
     mlair_model_version: dict[str, Any] = Field(default_factory=dict)
 

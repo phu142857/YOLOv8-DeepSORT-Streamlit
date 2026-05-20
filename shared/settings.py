@@ -38,6 +38,8 @@ class Settings:
     mlair_dataset_name: str = _env("CV_MLAIR_DATASET_NAME", "cv-traffic-frames")
     mlair_auto_ingest: bool = _env_bool("CV_MLAIR_AUTO_INGEST", True)
     mlair_auto_materialize: bool = _env_bool("CV_MLAIR_AUTO_MATERIALIZE", True)
+    # Ignored at runtime — threshold/strategy come from MLAir Hub buffer API.
+    mlair_buffer_threshold: int = int(_env("CV_MLAIR_BUFFER_THRESHOLD", "0"))
     mlair_hub_url: str = _env("CV_MLAIR_HUB_URL", "http://localhost:38080")
     client_save_to_dataset: bool = _env_bool("CV_CLIENT_SAVE_TO_DATASET", True)
     mlair_model_id: str = _env("CV_MLAIR_MODEL_ID", "")

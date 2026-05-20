@@ -145,6 +145,7 @@ class JobStore:
         mlair_dataset_id: str | None = None,
         mlair_dataset_version_id: str | None = None,
         mlair_readiness: dict[str, Any] | None = None,
+        mlair_ingest: dict[str, Any] | None = None,
         mlair_training: dict[str, Any] | None = None,
         mlair_model_version: dict[str, Any] | None = None,
     ) -> JobResponse | None:
@@ -177,6 +178,8 @@ class JobStore:
                 data["mlair_dataset_version_id"] = mlair_dataset_version_id
             if mlair_readiness is not None:
                 data["mlair_readiness"] = mlair_readiness
+            if mlair_ingest is not None:
+                data["mlair_ingest"] = mlair_ingest
             if mlair_training is not None:
                 data["mlair_training"] = mlair_training
             if mlair_model_version is not None:

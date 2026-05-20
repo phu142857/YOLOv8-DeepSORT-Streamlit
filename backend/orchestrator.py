@@ -178,6 +178,7 @@ def run_job_pipeline(
             mlair_dataset_version_id=mlair_meta.get("dataset_version_id")
             or (job_meta.mlair_dataset_version_id if job_meta else None),
             mlair_readiness=ctx.metadata.get("mlair_readiness") or {},
+            mlair_ingest=ctx.metadata.get("mlair_ingest") or {},
             mlair_training=ctx.metadata.get("mlair_training") or {},
             mlair_model_version=ctx.metadata.get("mlair_model_version") or {},
         )

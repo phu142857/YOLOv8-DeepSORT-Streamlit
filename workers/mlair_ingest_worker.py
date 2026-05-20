@@ -50,6 +50,9 @@ class MLAirIngestWorker:
                     "job_id": ctx.job_id,
                     "rows": result.get("rows"),
                     "dataset_id": result.get("dataset_id"),
+                    "current_size": result.get("current_size") or result.get("mlair_buffer_current_size"),
+                    "target_threshold": result.get("target_threshold"),
+                    "accumulation_strategy": result.get("accumulation_strategy"),
                     "dataset_version_id": result.get("dataset_version_id"),
                 },
                 job_id=ctx.job_id,
@@ -64,11 +67,13 @@ class MLAirIngestWorker:
                     store=ctx.store,
                 )
 
-            return WorkerResult(
-                ok=True,
-                message=f"mlair ingest: {result.get('rows', 0)} rows",
-                metadata=ctx.metadata,
-            )
+            current = result.get("current_size") or result.get("mlair_buffer_current_size") or "?"
+            threshold = result.get("target_threshold", "?")
+            if result.get("dataset_version_id"):
+                msg = f"mlair: version created (buffer {current}/{threshold})"
+            else:
+                msg = f"mlair: appended {result.get('rows', 0)} rows (buffer {current}/{threshold})"
+            return WorkerResult(ok=True, message=msg, metadata=ctx.metadata)
         except Exception as exc:
             logger.exception("MLAir ingest failed for job %s", ctx.job_id)
             return WorkerResult(ok=False, message=f"mlair ingest failed: {exc}")

@@ -21,17 +21,28 @@ logger = logging.getLogger(__name__)
 MANIFEST_COLUMNS = ("image_uri", "frame_index", "job_id", "source_file", "artifact_path")
 
 
+def _items_from_response(data: Any) -> list[dict[str, Any]]:
+    """Parse MLAir list endpoints: ``{"items": [...]}`` or a bare list."""
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        items = data.get("items")
+        if isinstance(items, list):
+            return [row for row in items if isinstance(row, dict)]
+    return []
+
+
 class DatasetClient(MLAirClient):
     def list_datasets(self, limit: int = 100) -> list[dict[str, Any]]:
         data = self.get(f"{self._prefix()}/datasets", params={"limit": limit})
-        return list(data.get("items") or data if isinstance(data, list) else [])
+        return _items_from_response(data)
 
     def get_dataset(self, dataset_id: str) -> dict[str, Any]:
         return self.get(f"{self._prefix()}/datasets/{dataset_id}")
 
     def list_versions(self, dataset_id: str) -> list[dict[str, Any]]:
         data = self.get(f"{self._prefix()}/datasets/{dataset_id}/versions")
-        return list(data.get("items") or [])
+        return _items_from_response(data)
 
     def get_version(self, version_id: str) -> dict[str, Any]:
         return self.get(f"{self._prefix()}/dataset-versions/{version_id}")
@@ -56,37 +67,60 @@ class DatasetClient(MLAirClient):
     def materialize_buffer(self, dataset_id: str) -> dict[str, Any]:
         return self.post(f"{self._prefix()}/datasets/{dataset_id}/materialize")
 
-    def maybe_auto_materialize(self, dataset_id: str) -> dict[str, Any] | None:
+    def materialize_when_threshold_met(self, dataset_id: str) -> dict[str, Any]:
         """
-        Materialize buffer when size >= threshold or when manual/schedule strategy allows.
-        Returns materialize result dict or None if skipped.
+        Create a new dataset version only when accumulation threshold is satisfied.
+        Does not materialize for manual-only strategies unless buffer is ready.
         """
         try:
             buf = self.get_buffer(dataset_id)
         except httpx.HTTPError as exc:
             logger.warning("Cannot read buffer for %s: %s", dataset_id, exc)
-            return None
+            return {"skipped": True, "reason": "buffer_unavailable", "error": str(exc)}
 
         current = int(buf.get("current_size") or buf.get("record_count") or 0)
         threshold = int(buf.get("target_threshold") or 0)
         strategy = str(buf.get("accumulation_strategy") or "")
 
-        should = False
-        if threshold > 0 and current >= threshold:
-            should = True
-        if strategy in {"manual_materialize_only", "snapshot_on_schedule"} and current > 0:
-            should = True
+        if threshold <= 0:
+            return {
+                "skipped": True,
+                "reason": "no_threshold",
+                "current_size": current,
+                "target_threshold": threshold,
+            }
 
-        if not should:
-            return {"skipped": True, "current_size": current, "target_threshold": threshold}
+        if current < threshold:
+            return {
+                "skipped": True,
+                "reason": "below_threshold",
+                "materialized": False,
+                "current_size": current,
+                "target_threshold": threshold,
+            }
+
+        if strategy == "rolling_accumulate":
+            return {
+                "skipped": True,
+                "reason": "rolling_accumulate_requires_manual_materialize",
+                "current_size": current,
+                "target_threshold": threshold,
+            }
 
         try:
             result = self.materialize_buffer(dataset_id)
-            result["triggered_by"] = "cv_workload_auto_materialize"
+            result["triggered_by"] = "cv_workload_threshold_met"
+            result["materialized"] = True
+            result["current_size"] = current
+            result["target_threshold"] = threshold
             return result
         except httpx.HTTPError as exc:
             logger.warning("Materialize failed for %s: %s", dataset_id, exc)
-            return {"skipped": True, "error": str(exc)}
+            return {"skipped": True, "materialized": False, "error": str(exc)}
+
+    def maybe_auto_materialize(self, dataset_id: str) -> dict[str, Any] | None:
+        """Alias for threshold-gated materialize (legacy callers)."""
+        return self.materialize_when_threshold_met(dataset_id)
 
     def build_frame_manifest_csv(
         self,
@@ -140,6 +174,47 @@ class DatasetClient(MLAirClient):
                 files={"file": (csv_path.name, f, "text/csv")},
             )
 
+    def append_buffer_rows(
+        self,
+        dataset_id: str,
+        *,
+        rows: list[dict[str, Any]],
+        source_type: str | None = None,
+        execution_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        POST .../datasets/{dataset_id}/buffer/append
+        Appends rows into MLAir accumulation buffer window and may auto-materialize.
+        """
+        body: dict[str, Any] = {"rows": rows}
+        if source_type:
+            body["source_type"] = source_type
+        if execution_id:
+            body["execution_id"] = execution_id
+        return self.post(f"{self._prefix()}/datasets/{dataset_id}/buffer/append", json=body)
+
+    def append_buffer_rows_by_name(
+        self,
+        dataset_name: str,
+        *,
+        rows: list[dict[str, Any]],
+        source_type: str | None = None,
+        execution_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        POST .../datasets/by-name/{dataset_name}/buffer/append
+        Creates dataset if missing, then appends rows into its accumulation buffer.
+        """
+        safe = str(dataset_name or "").strip()
+        if not safe:
+            raise ValueError("dataset_name_required")
+        body: dict[str, Any] = {"rows": rows}
+        if source_type:
+            body["source_type"] = source_type
+        if execution_id:
+            body["execution_id"] = execution_id
+        return self.post(f"{self._prefix()}/datasets/by-name/{safe}/buffer/append", json=body)
+
     def ingest_job_frames(
         self,
         job_id: str,
@@ -152,8 +227,8 @@ class DatasetClient(MLAirClient):
         auto_materialize: bool = False,
     ) -> dict[str, Any]:
         """
-        Push extracted frames to MLAir as a CSV dataset version.
-        Returns ingest summary with dataset_id / dataset_version_id when present.
+        Append extracted frame manifest rows into MLAir dataset buffer.
+        Returns ingest summary with dataset_id / dataset_version_id when materialized.
         """
         if not self.enabled:
             return {"skipped": True, "reason": "mlair_not_configured"}
@@ -167,31 +242,35 @@ class DatasetClient(MLAirClient):
         if row_count == 0:
             return {"skipped": True, "reason": "no_frames", "job_id": job_id}
 
+        # NOTE: materialization is decided by MLAir buffer policy; cv-api only appends rows.
+        _ = auto_materialize
+
+        # Convert manifest CSV back into list-of-dicts rows for MLAir buffer/append.
+        rows: list[dict[str, Any]] = []
+        with Path(manifest_path).open(encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                rows.append({k: (r.get(k) or "") for k in MANIFEST_COLUMNS})
+
         name = dataset_name or settings.mlair_dataset_name
-        result = self.upload_manifest_csv(manifest_path, name)
-
-        out: dict[str, Any] = {
-            "job_id": job_id,
-            "rows": row_count,
-            "manifest": str(manifest_path),
-            "upload": result,
-        }
-
-        ds_id = result.get("dataset_id") or dataset_id
-        ver_id = result.get("dataset_version_id") or result.get("version_id")
-        if ds_id:
-            out["dataset_id"] = ds_id
-        if ver_id:
-            out["dataset_version_id"] = ver_id
-
-        if auto_materialize and ds_id:
-            mat = self.maybe_auto_materialize(ds_id)
-            if mat and not mat.get("skipped"):
-                out["materialized"] = mat
-                out["dataset_version_id"] = (
-                    mat.get("dataset_version_id") or out.get("dataset_version_id")
-                )
-
+        if dataset_id:
+            out = self.append_buffer_rows(
+                dataset_id,
+                rows=rows,
+                source_type="runtime_manifest",
+                execution_id=job_id,
+            )
+        else:
+            out = self.append_buffer_rows_by_name(
+                name,
+                rows=rows,
+                source_type="runtime_manifest",
+                execution_id=job_id,
+            )
+        # Normalize keys so the rest of the CV workload can rely on them.
+        out.setdefault("job_id", job_id)
+        out.setdefault("rows", row_count)
+        out.setdefault("dataset_name", name)
         return out
 
     def download_version_csv(self, version_id: str) -> bytes:

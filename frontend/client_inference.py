@@ -93,7 +93,13 @@ def show_dataset_feedback(api: CVApiClient, job: JobResponse) -> None:
     if not settings.client_save_to_dataset:
         st.caption("Dataset save is disabled (`CV_CLIENT_SAVE_TO_DATASET=0`).")
         return
-    if not job.mlair_dataset_id:
+    ingest = job.mlair_ingest or {}
+    if ingest.get("skipped"):
+        reason = ingest.get("reason", "unknown")
+        st.warning(f"MLAir ingest skipped: `{reason}`.")
+        return
+
+    if not ingest.get("rows") and not job.mlair_dataset_id:
         try:
             mlair = api.mlair_status()
             if not mlair.get("configured"):
@@ -110,9 +116,52 @@ def show_dataset_feedback(api: CVApiClient, job: JobResponse) -> None:
             st.caption("Could not verify MLAir status.")
         return
 
-    st.success("Frames saved to MLAir dataset buffer.")
+    dataset_id = job.mlair_dataset_id
+    if not dataset_id and ingest.get("dataset_name"):
+        try:
+            for row in api.mlair_list_datasets():
+                if (row.get("name") or "") == ingest.get("dataset_name"):
+                    dataset_id = row.get("dataset_id")
+                    break
+        except Exception:
+            pass
+    current_size = ingest.get("current_size") or ingest.get("mlair_buffer_current_size")
+    strategy = ingest.get("accumulation_strategy", "")
+    gated = ingest.get("flush_gated_by", "")
+
+    live_threshold = ingest.get("target_threshold")
+    live_strategy = strategy
+    if dataset_id:
+        try:
+            buf = api.mlair_get_buffer(dataset_id)
+            current_size = buf.get("current_size", buf.get("record_count", current_size))
+            live_threshold = buf.get("target_threshold", live_threshold)
+            live_strategy = buf.get("accumulation_strategy", live_strategy)
+        except Exception:
+            pass
+
     if job.mlair_dataset_version_id:
-        st.info(f"New dataset version created: `{job.mlair_dataset_version_id}`")
+        st.success("Dataset version created — MLAir accumulation threshold reached.")
+        st.info(f"Version: `{job.mlair_dataset_version_id}`")
+    else:
+        st.success("Frames staged for dataset (no new version yet).")
+        if current_size is not None and live_threshold is not None:
+            name = ingest.get("dataset_name") or settings.mlair_dataset_name
+            st.info(
+                "**Accumulating on MLAir Hub** — buffer grows on MLAir as you run Executions. "
+                f"Dataset `{name}`: **{current_size}** / **{live_threshold}** rows "
+                f"(threshold from Hub config)."
+            )
+            st.caption(
+                "When the buffer reaches the threshold, MLAir will materialize an immutable dataset version."
+            )
+        if live_strategy and live_strategy != "snapshot_on_threshold":
+            st.caption(
+                f"MLAir strategy **{live_strategy}** — auto version on Execution is off; "
+                f"materialize from Hub when ready."
+            )
+        elif gated:
+            st.caption(f"Flush gated: `{gated}`")
     if job.mlair_training:
         run_id = job.mlair_training.get("run_id", "")
         run_status = (job.mlair_training.get("run") or {}).get("status", "")
@@ -120,22 +169,17 @@ def show_dataset_feedback(api: CVApiClient, job: JobResponse) -> None:
     if job.mlair_model_version:
         mv = job.mlair_model_version
         st.caption(f"Model promoted: v{mv.get('version')} → {mv.get('stage')}")
-    if not job.mlair_dataset_version_id:
-        try:
-            buf = api.mlair_get_buffer(job.mlair_dataset_id)
-            current = buf.get("current_size", buf.get("record_count", 0))
-            threshold = buf.get("target_threshold", "—")
-            st.caption(
-                f"Buffer: **{current}** / threshold **{threshold}** — "
-                f"a version is created when accumulation reaches the threshold."
-            )
-        except Exception:
-            pass
 
     hub = settings.mlair_hub_url.rstrip("/")
-    st.markdown(
-        f"Manage lifecycle, readiness, and training in **[MLAir Hub]({hub})**."
-    )
+    if job.mlair_dataset_version_id:
+        st.markdown(
+            f"Manage lifecycle, readiness, and training in **[MLAir Hub]({hub})**."
+        )
+    else:
+        st.markdown(
+            f"Sau khi có version trên MLAir, quản lý tại **[MLAir Hub]({hub})** "
+            f"(dataset `{ingest.get('dataset_name') or settings.mlair_dataset_name}`)."
+        )
 
 
 def render_image_client(api: CVApiClient, model_name: str, confidence: float) -> None:
