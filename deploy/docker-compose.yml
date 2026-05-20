@@ -1,0 +1,5 @@
+# Deprecated — use the root stack instead:
+#   docker compose up -d --build
+#   ./scripts/docker-up.sh
+#
+# See: /docker-compose.yml

@@ -1,0 +1,210 @@
+# Full stack — pull MLAir images (no git clone). CV builds from this repo.
+#
+#   cp .env.docker.example .env
+#   docker compose pull
+#   docker compose up -d
+#
+# Images: ghcr.io/phu142857/ml-air-{api,scheduler,executor,frontend,realtime}:latest
+
+name: cv-mlair-stack
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ml-air-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mlair}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mlair}
+      POSTGRES_DB: ${POSTGRES_DB:-mlair}
+    ports:
+      - "${ML_AIR_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ml_air_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlair -d mlair"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: ml-air-redis
+    ports:
+      - "${ML_AIR_REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-api:${MLAIR_TAG:-latest}
+    pull_policy: always
+    container_name: ml-air-api
+    environment:
+      ML_AIR_REDIS_URL: redis://redis:6379/0
+      ML_AIR_DATABASE_URL: postgresql://mlair:mlair@postgres:5432/mlair
+      ML_AIR_JWT_HS256_SECRET: ${ML_AIR_JWT_HS256_SECRET:-mlair-dev-jwt-secret-32bytes-minimum-key}
+      ML_AIR_TRACKING_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
+      ML_AIR_SKIP_APPROVAL_FOR_PROMOTE: ${ML_AIR_SKIP_APPROVAL_FOR_PROMOTE:-1}
+      ML_AIR_MANIFEST_SIGNING_KEY: ${ML_AIR_MANIFEST_SIGNING_KEY:-mlair-dev-manifest-signing-key}
+      ML_AIR_MANIFEST_ACTIVE_KEY_ID: ${ML_AIR_MANIFEST_ACTIVE_KEY_ID:-v1}
+      ML_AIR_DATASET_ARTIFACT_ROOT: file:///mlair/artifacts/datasets
+      MLAIR_REALTIME_ENABLED: ${MLAIR_REALTIME_ENABLED:-true}
+      ML_AIR_RUNTIME_REALTIME_BASE_URL: ${ML_AIR_RUNTIME_REALTIME_BASE_URL:-ws://localhost:8001}
+      ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK: ${ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK:-0}
+      ML_AIR_STRICT_DATASET_VERSION_REQUIRED: ${ML_AIR_STRICT_DATASET_VERSION_REQUIRED:-1}
+    ports:
+      - "${ML_AIR_API_PORT:-8080}:8080"
+    volumes:
+      - ml_air_dataset_artifacts:/mlair/artifacts/datasets
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 120s
+    restart: unless-stopped
+
+  scheduler:
+    image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-scheduler:${MLAIR_TAG:-latest}
+    pull_policy: always
+    environment:
+      ML_AIR_REDIS_URL: redis://redis:6379/0
+      ML_AIR_DATABASE_URL: postgresql://mlair:mlair@postgres:5432/mlair
+      ML_AIR_MANIFEST_SIGNING_KEY: ${ML_AIR_MANIFEST_SIGNING_KEY:-mlair-dev-manifest-signing-key}
+      ML_AIR_MANIFEST_ACTIVE_KEY_ID: ${ML_AIR_MANIFEST_ACTIVE_KEY_ID:-v1}
+      MLAIR_REALTIME_ENABLED: ${MLAIR_REALTIME_ENABLED:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  realtime:
+    image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-realtime:${MLAIR_TAG:-latest}
+    pull_policy: always
+    container_name: ml-air-realtime
+    environment:
+      ML_AIR_REDIS_URL: redis://redis:6379/0
+      ML_AIR_LOG_LEVEL: ${ML_AIR_LOG_LEVEL:-INFO}
+      ML_AIR_JWT_HS256_SECRET: ${ML_AIR_JWT_HS256_SECRET:-mlair-dev-jwt-secret-32bytes-minimum-key}
+      MLAIR_REALTIME_ENABLED: ${MLAIR_REALTIME_ENABLED:-true}
+    ports:
+      - "${MLAIR_REALTIME_PORT:-8001}:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  executor:
+    image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-executor:${MLAIR_TAG:-latest}
+    pull_policy: always
+    container_name: ml-air-executor
+    environment:
+      ML_AIR_REDIS_URL: redis://redis:6379/0
+      ML_AIR_DATABASE_URL: postgresql://mlair:mlair@postgres:5432/mlair
+      ML_AIR_API_BASE_URL: http://api:8080
+      ML_AIR_TRACKING_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
+      ML_AIR_MANIFEST_SIGNING_KEY: ${ML_AIR_MANIFEST_SIGNING_KEY:-mlair-dev-manifest-signing-key}
+      ML_AIR_MANIFEST_ACTIVE_KEY_ID: ${ML_AIR_MANIFEST_ACTIVE_KEY_ID:-v1}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-frontend:${MLAIR_TAG:-latest}
+    pull_policy: always
+    container_name: ml-air-frontend
+    environment:
+      MLAIR_NEXT_INTERNAL_API_URL: http://api:8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${ML_AIR_FRONTEND_PORT:-38080}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+      realtime:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cv-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
+    container_name: cv-lifecycle-api
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    environment:
+      PYTHONPATH: /app
+      CV_ARTIFACT_ROOT: /app/artifacts
+      CV_API_BASE_URL: http://cv-api:8000
+      CV_MLAIR_API_URL: http://api:8080
+      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN:-admin-token}
+      CV_MLAIR_TENANT: ${CV_MLAIR_TENANT:-default}
+      CV_MLAIR_PROJECT: ${CV_MLAIR_PROJECT:-default_project}
+      CV_MLAIR_DATASET_NAME: ${CV_MLAIR_DATASET_NAME:-cv-traffic-frames}
+      CV_MLAIR_AUTO_INGEST: ${CV_MLAIR_AUTO_INGEST:-1}
+      CV_MLAIR_AUTO_MATERIALIZE: ${CV_MLAIR_AUTO_MATERIALIZE:-1}
+      CV_PERSIST_JOBS: ${CV_PERSIST_JOBS:-1}
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./weights:/app/weights
+    ports:
+      - "${CV_API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 180s
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cv-ui:
+    image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
+    container_name: cv-lifecycle-ui
+    command: streamlit run frontend/app.py --server.port=8501 --server.address=0.0.0.0 --browser.gatherUsageStats=false
+    environment:
+      PYTHONPATH: /app
+      CV_API_BASE_URL: http://cv-api:8000
+      CV_MLAIR_HUB_URL: ${CV_MLAIR_HUB_URL:-http://localhost:38080}
+      CV_CLIENT_SAVE_TO_DATASET: ${CV_CLIENT_SAVE_TO_DATASET:-1}
+    volumes:
+      - ./weights:/app/weights:ro
+    ports:
+      - "${CV_UI_PORT:-8501}:8501"
+    depends_on:
+      cv-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ml_air_pgdata:
+  ml_air_dataset_artifacts:

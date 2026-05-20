@@ -137,6 +137,9 @@ datasets/
 runs/
 wandb/
 
+# Lifecycle workload artifacts (lineage / replay / MLAir ingest)
+artifacts/
+
 .DS_Store
 
 # Neural Network weights -----------------------------------------------------------------------------------------------
@@ -154,3 +157,4 @@ weights/
 *_web_model/
 *_openvino_model/
 *_paddle_model/
+ROADMAP.md
