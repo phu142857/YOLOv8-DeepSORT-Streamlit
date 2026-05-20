@@ -50,6 +50,25 @@ class Settings:
     mlair_train_poll_interval_sec: float = float(_env("CV_MLAIR_TRAIN_POLL_INTERVAL_SEC", "10"))
     mlair_promote_stage: str = _env("CV_MLAIR_PROMOTE_STAGE", "production")
     mlair_weights_cache_dir: Path = Path(_env("CV_MLAIR_WEIGHTS_CACHE_DIR", "weights/registry"))
+    # Must match ml-air-api model artifact root (docker volume at /mlair/artifacts/models).
+    mlair_model_artifact_mount: str = _env("CV_MLAIR_MODEL_ARTIFACT_MOUNT", "/mlair/artifacts")
+    # Auto push local weights/detection → MLAir registry; pull after train/promote.
+    mlair_auto_sync_models: bool = _env_bool("CV_MLAIR_AUTO_SYNC_MODELS", True)
+    mlair_sync_on_startup: bool = _env_bool("CV_MLAIR_SYNC_ON_STARTUP", True)
+    mlair_sync_after_train: bool = _env_bool("CV_MLAIR_SYNC_AFTER_TRAIN", True)
+    mlair_sync_stage: str = _env("CV_MLAIR_SYNC_STAGE", "production")
+    mlair_sync_interval_sec: float = float(_env("CV_MLAIR_SYNC_INTERVAL_SEC", "300"))
+    mlair_mirror_registry_to_local: bool = _env_bool("CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL", True)
+    mlair_sync_state_path: Path = Path(_env("CV_MLAIR_SYNC_STATE_PATH", "artifacts/.mlair_model_sync_state.json"))
+    # MLAir pipeline `cv-yolo-vehicle-train` (HTTP task → /api/v1/mlair/train/execute)
+    mlair_train_pipeline_id: str = _env("CV_MLAIR_TRAIN_PIPELINE_ID", "cv-yolo-vehicle-train")
+    mlair_train_callback_token: str = _env("CV_MLAIR_TRAIN_CALLBACK_TOKEN", "admin-token")
+    mlair_train_base_model_spec: str = _env("CV_MLAIR_TRAIN_BASE_MODEL", "yolov8n/base")
+    mlair_train_epochs: int = int(_env("CV_MLAIR_TRAIN_EPOCHS", "10"))
+    mlair_train_batch: int = int(_env("CV_MLAIR_TRAIN_BATCH", "8"))
+    mlair_train_imgsz: int = int(_env("CV_MLAIR_TRAIN_IMGSZ", "640"))
+    mlair_train_max_frames: int = int(_env("CV_MLAIR_TRAIN_MAX_FRAMES", "500"))
+    mlair_train_import_stage: str = _env("CV_MLAIR_TRAIN_IMPORT_STAGE", "production")
 
     video_extensions: frozenset[str] = frozenset(
         {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}

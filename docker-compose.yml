@@ -39,6 +39,21 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Named volume is often root-owned on first create; MLAir import .pt needs appuser (uid 1000).
+  mlair-artifact-init:
+    image: docker.io/library/alpine:3.20
+    user: "0:0"
+    volumes:
+      - ml_air_dataset_artifacts:/datasets
+      - ml_air_model_artifacts:/models
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /datasets /models
+        chown -R 1000:1000 /datasets /models
+    restart: "no"
+
   api:
     image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-api:${MLAIR_TAG:-latest}
     pull_policy: always
@@ -52,6 +67,7 @@ services:
       ML_AIR_MANIFEST_SIGNING_KEY: ${ML_AIR_MANIFEST_SIGNING_KEY:-mlair-dev-manifest-signing-key}
       ML_AIR_MANIFEST_ACTIVE_KEY_ID: ${ML_AIR_MANIFEST_ACTIVE_KEY_ID:-v1}
       ML_AIR_DATASET_ARTIFACT_ROOT: file:///mlair/artifacts/datasets
+      ML_AIR_DEFAULT_MODEL_ARTIFACT_ROOT: file:///mlair/artifacts/models
       MLAIR_REALTIME_ENABLED: ${MLAIR_REALTIME_ENABLED:-true}
       ML_AIR_RUNTIME_REALTIME_BASE_URL: ${ML_AIR_RUNTIME_REALTIME_BASE_URL:-ws://localhost:8001}
       ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK: ${ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK:-0}
@@ -60,7 +76,10 @@ services:
       - "${ML_AIR_API_PORT:-8080}:8080"
     volumes:
       - ml_air_dataset_artifacts:/mlair/artifacts/datasets
+      - ml_air_model_artifacts:/mlair/artifacts/models
     depends_on:
+      mlair-artifact-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -130,6 +149,9 @@ services:
       ML_AIR_TRACKING_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
       ML_AIR_MANIFEST_SIGNING_KEY: ${ML_AIR_MANIFEST_SIGNING_KEY:-mlair-dev-manifest-signing-key}
       ML_AIR_MANIFEST_ACTIVE_KEY_ID: ${ML_AIR_MANIFEST_ACTIVE_KEY_ID:-v1}
+      ML_AIR_HTTP_TASK_ALLOWED_HOSTS: cv-api,cv-lifecycle-api,localhost,127.0.0.1
+      ML_AIR_HTTP_TASK_TEMPLATES: "1"
+      CV_MLAIR_TRAIN_CALLBACK_TOKEN: ${CV_MLAIR_TRAIN_CALLBACK_TOKEN:-admin-token}
     depends_on:
       api:
         condition: service_healthy
@@ -172,11 +194,21 @@ services:
       CV_MLAIR_AUTO_MATERIALIZE: ${CV_MLAIR_AUTO_MATERIALIZE:-1}
       CV_MLAIR_MODEL_ID: ${CV_MLAIR_MODEL_ID:-}
       CV_MLAIR_AUTO_TRAIN: ${CV_MLAIR_AUTO_TRAIN:-0}
+      CV_MLAIR_TRAIN_PIPELINE_ID: ${CV_MLAIR_TRAIN_PIPELINE_ID:-cv-yolo-vehicle-train}
+      CV_MLAIR_TRAIN_CALLBACK_TOKEN: ${CV_MLAIR_TRAIN_CALLBACK_TOKEN:-admin-token}
+      CV_MLAIR_TRAIN_EPOCHS: ${CV_MLAIR_TRAIN_EPOCHS:-10}
       CV_MLAIR_AUTO_PROMOTE: ${CV_MLAIR_AUTO_PROMOTE:-0}
+      CV_MLAIR_AUTO_SYNC_MODELS: ${CV_MLAIR_AUTO_SYNC_MODELS:-1}
+      CV_MLAIR_SYNC_ON_STARTUP: ${CV_MLAIR_SYNC_ON_STARTUP:-1}
+      CV_MLAIR_SYNC_AFTER_TRAIN: ${CV_MLAIR_SYNC_AFTER_TRAIN:-1}
+      CV_MLAIR_SYNC_INTERVAL_SEC: ${CV_MLAIR_SYNC_INTERVAL_SEC:-300}
+      CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL: ${CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL:-1}
+      CV_MLAIR_MODEL_ARTIFACT_MOUNT: /mlair/artifacts
       CV_PERSIST_JOBS: ${CV_PERSIST_JOBS:-1}
     volumes:
       - ./artifacts:/app/artifacts
       - ./weights:/app/weights
+      - ml_air_model_artifacts:/mlair/artifacts/models:ro
     ports:
       - "${CV_API_PORT:-8000}:8000"
     healthcheck:
@@ -211,3 +243,4 @@ services:
 volumes:
   ml_air_pgdata:
   ml_air_dataset_artifacts:
+  ml_air_model_artifacts:

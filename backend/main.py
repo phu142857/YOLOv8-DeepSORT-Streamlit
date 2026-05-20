@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,12 +20,31 @@ artifact_store = ArtifactStore()
 init_job_store(artifact_store)
 
 # Import routes after init_job_store so all modules share the same JobStore instance.
-from backend.routes import artifacts, frames, jobs, lifecycle, mlair, models, registry, uploads  # noqa: E402
+from backend.routes import (  # noqa: E402
+    artifacts,
+    frames,
+    jobs,
+    lifecycle,
+    mlair,
+    mlair_training,
+    models,
+    registry,
+    uploads,
+)
+from mlair_adapter.model_sync import start_model_sync_background  # noqa: E402
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_model_sync_background()
+    yield
+
 
 app = FastAPI(
     title="CV Lifecycle Workload API",
     description="YOLOv8 + DeepSORT workload with artifact persistence (MLAir-ready)",
     version="0.2.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -40,6 +60,7 @@ app.include_router(jobs.router)
 app.include_router(artifacts.router)
 app.include_router(frames.router)
 app.include_router(mlair.router)
+app.include_router(mlair_training.router)
 app.include_router(lifecycle.router)
 app.include_router(registry.router)
 app.include_router(models.router)
@@ -72,6 +93,8 @@ def runtime_config() -> dict:
     return {
         "mlair_configured": bool(settings.mlair_api_url and settings.mlair_token),
         "mlair_auto_train": settings.mlair_auto_train,
+        "mlair_auto_sync_models": settings.mlair_auto_sync_models,
+        "mlair_sync_interval_sec": settings.mlair_sync_interval_sec,
         "mlair_model_id": settings.mlair_model_id or None,
         "mlair_api_url": settings.mlair_api_url or None,
         "artifact_root": str(settings.artifact_root),

@@ -6,6 +6,7 @@ import logging
 
 from mlair_adapter.events_client import emit_event
 from mlair_adapter.model_client import ModelClient
+from mlair_adapter.model_sync import ModelSyncService
 from mlair_adapter.training_client import TrainingClient
 from shared.settings import settings
 from workers.base import WorkerContext, WorkerResult
@@ -23,9 +24,12 @@ class MLAirTrainWorker:
         if ctx.metadata.get("skip_mlair_ingest"):
             return WorkerResult(ok=True, message="train skipped (mlair pull source)")
 
-        model_id = settings.mlair_model_id
+        model_id = ModelSyncService().resolve_model_id_for_spec(ctx.model_name)
         if not model_id:
-            return WorkerResult(ok=True, message="train skipped (CV_MLAIR_MODEL_ID unset)")
+            return WorkerResult(
+                ok=True,
+                message="train skipped (no MLAir model for job model_name; sync weights first)",
+            )
 
         ingest = ctx.metadata.get("mlair_ingest") or {}
         dataset_id = ingest.get("dataset_id") or ctx.metadata.get("mlair_dataset_id")
@@ -87,9 +91,16 @@ class MLAirTrainWorker:
                     job_id=ctx.job_id,
                     store=ctx.store,
                 )
-                model_version = self._maybe_promote(model_id, run_id, ctx)
-                if model_version:
-                    ctx.metadata["mlair_model_version"] = model_version
+                promoted = self._maybe_promote(model_id, run_id, ctx)
+                if promoted:
+                    ctx.metadata["mlair_model_version"] = promoted
+                if settings.mlair_sync_after_train:
+                    try:
+                        sync_out = ModelSyncService().sync_after_training(model_id, run_id=run_id)
+                        ctx.metadata["mlair_model_sync"] = sync_out
+                    except Exception as sync_exc:
+                        logger.warning("post-train model sync failed: %s", sync_exc)
+                        ctx.metadata["mlair_model_sync"] = {"ok": False, "error": str(sync_exc)}
             else:
                 emit_event(
                     "training.run.failed",

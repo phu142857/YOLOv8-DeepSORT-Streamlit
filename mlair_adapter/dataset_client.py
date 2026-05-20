@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 
-from mlair_adapter.base_client import MLAirClient
+from mlair_adapter.base_client import MLAirClient, items_from_response
 from shared.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -22,14 +22,7 @@ MANIFEST_COLUMNS = ("image_uri", "frame_index", "job_id", "source_file", "artifa
 
 
 def _items_from_response(data: Any) -> list[dict[str, Any]]:
-    """Parse MLAir list endpoints: ``{"items": [...]}`` or a bare list."""
-    if isinstance(data, list):
-        return [row for row in data if isinstance(row, dict)]
-    if isinstance(data, dict):
-        items = data.get("items")
-        if isinstance(items, list):
-            return [row for row in items if isinstance(row, dict)]
-    return []
+    return items_from_response(data)
 
 
 class DatasetClient(MLAirClient):

@@ -12,6 +12,17 @@ from shared.settings import settings
 logger = logging.getLogger(__name__)
 
 
+def items_from_response(data: Any) -> list[dict[str, Any]]:
+    """Parse MLAir list endpoints: ``{"items": [...]}`` or a bare list."""
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        items = data.get("items")
+        if isinstance(items, list):
+            return [row for row in items if isinstance(row, dict)]
+    return []
+
+
 class MLAirClient:
     def __init__(
         self,

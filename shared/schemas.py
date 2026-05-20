@@ -123,6 +123,7 @@ class RegistryModelOption(BaseModel):
     name: str = ""
     registry_value: str
     production_version: int | None = None
+    latest_version: int | None = None
     artifact_uri: str | None = None
 
 
@@ -144,3 +145,21 @@ class LocalModelOption(BaseModel):
 class LocalModelsResponse(BaseModel):
     root: str = ""
     items: list[LocalModelOption] = Field(default_factory=list)
+
+
+class UnifiedModelOption(BaseModel):
+    """One logical model: on-disk ``weights/detection/{model}/base`` + optional MLAir binding by name."""
+
+    model: str
+    spec: str  # always job field, e.g. yolov8n/base
+    label: str = ""
+    weights_path: str = ""
+    mlair_model_id: str | None = None
+    mlair_production_version: int | None = None
+    aligned: bool = False
+
+
+class UnifiedModelsResponse(BaseModel):
+    root: str = ""
+    mlair_configured: bool = False
+    items: list[UnifiedModelOption] = Field(default_factory=list)

@@ -74,6 +74,54 @@ def find_weights_in_dir(version_path: Path) -> Path | None:
     return None
 
 
+# Local folders aligned with MLAir production after a full sync.
+CANONICAL_LOCAL_VERSIONS = ("base", "production")
+
+
+def pick_canonical_local_entry(root: Path, model: str) -> LocalModelEntry | None:
+    """One representative checkpoint per model: base → production → highest vN."""
+    root = Path(root)
+    for version in CANONICAL_LOCAL_VERSIONS:
+        try:
+            weights = find_weights_in_dir(version_dir(root, model, version))
+        except ValueError:
+            weights = None
+        if weights is not None:
+            return LocalModelEntry(model=model, version=version, weights_path=weights)
+
+    best: LocalModelEntry | None = None
+    best_num = -1
+    model_path = root / model
+    if not model_path.is_dir():
+        return None
+    for version_dir_path in model_path.iterdir():
+        if not version_dir_path.is_dir():
+            continue
+        name = version_dir_path.name
+        if name in CANONICAL_LOCAL_VERSIONS:
+            continue
+        if name.startswith("v") and name[1:].isdigit():
+            num = int(name[1:])
+        else:
+            continue
+        weights = find_weights_in_dir(version_dir_path)
+        if weights is None:
+            continue
+        if num > best_num:
+            best_num = num
+            best = LocalModelEntry(model=model, version=name, weights_path=weights)
+    return best
+
+
+def list_detection_model_names(root: Path) -> list[str]:
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    return sorted(
+        d.name for d in root.iterdir() if d.is_dir() and not d.name.startswith(".")
+    )
+
+
 def scan_detection_models(root: Path) -> list[LocalModelEntry]:
     """
     Discover ``root/{model}/{version}/*.pt``.

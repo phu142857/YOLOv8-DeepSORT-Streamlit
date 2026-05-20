@@ -29,6 +29,7 @@ class TrainingClient(MLAirClient):
         context: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
         priority: str = "normal",
+        training_mode: str = "standard",
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "model_id": model_id,
@@ -43,6 +44,7 @@ class TrainingClient(MLAirClient):
             body["context"] = context
         if idempotency_key:
             body["idempotency_key"] = idempotency_key
+        body["training_mode"] = training_mode
         return self.post(f"{self._prefix()}/runs/trigger", json=body)
 
     def get_run(self, run_id: str) -> dict[str, Any]:

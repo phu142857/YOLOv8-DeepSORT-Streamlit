@@ -1,0 +1,11 @@
+# Optional: extend official ml-air-api with CV plugin package (does not modify ml-air source).
+#
+#   docker build -f deploy/Dockerfile.mlair-api-cv-plugins -t ml-air-api:cv-workload .
+#
+ARG MLAIR_API_IMAGE=ghcr.io/phu142857/ml-air-api:latest
+FROM ${MLAIR_API_IMAGE}
+
+USER root
+COPY integrations/mlair_cv_plugins /opt/mlair_cv_plugins
+RUN pip install --no-cache-dir /opt/mlair_cv_plugins
+USER appuser

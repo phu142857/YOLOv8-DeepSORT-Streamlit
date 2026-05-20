@@ -1,0 +1,15 @@
+{
+  "inputs": [
+    {
+      "dataset": "cv-traffic-frames",
+      "required_size": 1
+    }
+  ],
+  "tasks": [
+    {
+      "id": "yolo_train",
+      "plugin": "cv_yolo_train",
+      "plugin_version": ">=0.1.0,<2.0.0"
+    }
+  ]
+}

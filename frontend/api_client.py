@@ -16,6 +16,7 @@ from shared.schemas import (
     JobStatus,
     LocalModelsResponse,
     RegistryModelsResponse,
+    UnifiedModelsResponse,
 )
 from shared.settings import settings
 
@@ -130,10 +131,24 @@ class CVApiClient:
         r.raise_for_status()
         return RegistryModelsResponse(**r.json())
 
+    def sync_registry_weights(self, model_id: str, stage: str = "production") -> dict[str, Any]:
+        r = httpx.post(
+            f"{self.base_url}/api/v1/registry/models/{model_id}/sync-weights",
+            params={"stage": stage},
+            timeout=300.0,
+        )
+        r.raise_for_status()
+        return r.json()
+
     def list_local_models(self) -> LocalModelsResponse:
         r = httpx.get(f"{self.base_url}/api/v1/models/local", timeout=30.0)
         r.raise_for_status()
         return LocalModelsResponse(**r.json())
+
+    def list_unified_models(self) -> UnifiedModelsResponse:
+        r = httpx.get(f"{self.base_url}/api/v1/models", timeout=30.0)
+        r.raise_for_status()
+        return UnifiedModelsResponse(**r.json())
 
     def get_job_lifecycle(self, job_id: str) -> JobLifecycleResponse:
         r = httpx.get(f"{self.base_url}/api/v1/jobs/{job_id}/lifecycle", timeout=30.0)

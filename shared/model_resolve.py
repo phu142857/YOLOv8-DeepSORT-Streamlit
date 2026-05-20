@@ -35,9 +35,7 @@ def ensure_registry_weights(model_id: str, *, stage: str = "production") -> Path
     if not client.enabled:
         raise RuntimeError("MLAir not configured for registry models")
 
-    row = client.find_version_by_stage(model_id, stage)
-    if row is None:
-        row = client.find_latest_version(model_id)
+    row = client.resolve_version_row(model_id, stage=stage)
     if row is None or not row.get("artifact_uri"):
         raise FileNotFoundError(f"no {stage} artifact for model {model_id}")
 
