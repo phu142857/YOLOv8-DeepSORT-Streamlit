@@ -40,6 +40,7 @@ def load_cv_yolo_pipeline_config(
 
 def cv_yolo_train_pipeline_config(
     *,
+    mode: str = "plugin",
     dataset_logical_name: str | None = None,
     cv_train_url: str | None = None,
 ) -> dict:
@@ -49,6 +50,17 @@ def cv_yolo_train_pipeline_config(
     See ml-air docs: http-pipeline-tasks.md, configure-data-readiness-gating.md.
     """
     dataset = dataset_logical_name or settings.mlair_dataset_name
+    if mode == "plugin":
+        return {
+            "inputs": [{"dataset": dataset, "required_size": 1}],
+            "tasks": [
+                {
+                    "id": "yolo_train",
+                    "plugin": "cv_yolo_train",
+                    "plugin_version": ">=0.1.0,<2.0.0",
+                }
+            ],
+        }
     train_url = (cv_train_url or "http://cv-api:8000/api/v1/mlair/train/execute").rstrip("/")
     return {
         "inputs": [{"dataset": dataset, "required_size": 1}],

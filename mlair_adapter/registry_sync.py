@@ -6,7 +6,7 @@ import logging
 import time
 
 from mlair_adapter.model_sync import ModelSyncService, _hub_models_missing_versions, _wait_for_mlair_api
-from mlair_adapter.pipeline_bootstrap import ensure_cv_yolo_pipeline
+from mlair_adapter.pipeline_bootstrap import ensure_cv_yolo_pipeline, map_all_models_to_pipeline
 from shared.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,12 @@ def sync_mlair_registry_core(
         except Exception as exc:
             logger.warning("pipeline bootstrap in registry core failed: %s", exc)
             out["pipeline"] = {"ok": False, "error": str(exc)}
+    elif map_pipeline:
+        try:
+            out["pipeline_mapping"] = map_all_models_to_pipeline()
+        except Exception as exc:
+            logger.warning("pipeline mapping failed: %s", exc)
+            out["pipeline_mapping"] = {"ok": False, "error": str(exc)}
 
     return out
 

@@ -57,6 +57,54 @@ USER appuser
 
 (Build context trỏ vào repo CV; COPY đường dẫn package.)
 
+## Hub: "Task plugin is missing in pipeline config"
+
+Hub (`execution-intent-panel`) chỉ bật Train khi **mọi task có `plugin`**. Pipeline version kiểu HTTP (`type: http`) resolve được pipeline nhưng **UI vẫn chặn**.
+
+**Sửa:** đăng ký lại version **plugin** (`cv_yolo_train`) và cài plugin + worker:
+
+```bash
+# Sau rebuild cv-api
+curl -X POST "http://localhost:8000/api/v1/registry/pipeline/bootstrap"
+
+# Hoặc trực tiếp MLAir (token admin-token)
+curl -X POST "http://localhost:8080/v1/tenants/default/projects/default_project/pipelines/cv-yolo-vehicle-train/versions" \
+  -H "Authorization: Bearer admin-token" -H "Content-Type: application/json" \
+  -d @examples/mlair/pipelines/cv-yolo-vehicle-train.plugin.config.json
+
+docker compose build api && docker compose up -d api scheduler mlair-cv-train-worker cv-api
+curl -X POST "http://localhost:8080/v1/tenants/default/projects/default_project/plugins/reload" \
+  -H "Authorization: Bearer admin-token"
+```
+
+Mặc định stack: `CV_MLAIR_PIPELINE_MODE=plugin`, `ML_AIR_TASK_EXECUTION_MODE=external`, service `mlair-cv-train-worker`.
+
+## Train with model: pipeline unresolved
+
+Hub cần **`PUT .../models/{model_id}/pipeline-mapping`** → `cv-yolo-vehicle-train`. Bootstrap cũ bỏ qua bước này nếu pipeline đã có version.
+
+Sửa nhanh:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/registry/pipeline/map-models
+# hoặc
+curl -X POST http://localhost:8000/api/v1/registry/pipeline/bootstrap
+```
+
+Kiểm tra:
+
+```bash
+curl -H "Authorization: Bearer admin-token" \
+  "http://localhost:8080/v1/tenants/default/projects/default_project/models/<MODEL_ID>/resolved-pipeline"
+# pipeline_id phải là cv-yolo-vehicle-train, source: model_pipeline_mapping
+```
+
+## Pipeline chỉ 1 task?
+
+Đúng thiết kế: **một task** `yolo_train` (plugin `cv_yolo_train` hoặc HTTP). Ultralytics chạy trong worker/cv-api, không cần DAG nhiều bước.
+
+Trên Hub tab **Topology** sẽ thấy 1 node; inputs vẫn có dataset `cv-traffic-frames`.
+
 ## Pipeline không hiện trên Hub
 
 Hub chỉ liệt kê pipeline sau khi có **ít nhất một pipeline version** trong DB (`POST .../pipelines/{id}/versions`). Sync model **không** tự tạo pipeline.

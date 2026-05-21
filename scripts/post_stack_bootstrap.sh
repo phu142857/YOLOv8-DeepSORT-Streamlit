@@ -58,12 +58,16 @@ if int(d.get('pushed') or 0) == 0 and int(d.get('pulled') or 0) == 0 and fails:
 }
 
 if curl -sf "${CV_API_URL}/api/v1/runtime" | python3 -c "import json,sys; d=json.load(sys.stdin); exit(0 if d.get('mlair_configured') else 1)" 2>/dev/null; then
-  echo "==> Pipeline mapping (Hub Train)..."
+  echo "==> Pipeline + map all models (Hub Train with model)..."
   curl -sf -X POST "${CV_API_URL}/api/v1/registry/pipeline/bootstrap" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print('  pipeline:', d.get('pipeline_id'), 'skipped:', d.get('skipped', False))
+print('  pipeline:', d.get('pipeline_id'), 'mode:', d.get('mode'), 'skipped:', d.get('skipped', False), 'republished:', d.get('republished', False))
 " || echo "  (pipeline bootstrap skipped — non-fatal)"
+  TOKEN="${CV_MLAIR_TOKEN:-${ML_AIR_TRACKING_TOKEN:-admin-token}}"
+  curl -sf -X POST "http://127.0.0.1:${ML_AIR_API_PORT}/v1/tenants/${CV_MLAIR_TENANT:-default}/projects/${CV_MLAIR_PROJECT:-default_project}/plugins/reload" \
+    -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 \
+    && echo "  plugins: reload ok" || echo "  plugins: reload skipped (build api with cv plugins)"
 fi
 
 echo "==> Done. Hub: http://localhost:${ML_AIR_FRONTEND_PORT:-38080}"

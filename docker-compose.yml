@@ -55,17 +55,26 @@ services:
     restart: "no"
 
   api:
-    image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-api:${MLAIR_TAG:-latest}
-    pull_policy: always
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.mlair-api-cv-plugins
+      args:
+        MLAIR_API_IMAGE: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-api:${MLAIR_TAG:-latest}
+    image: ${MLAIR_API_CV_IMAGE:-ml-air-api:cv-workload}
+    pull_policy: build
     container_name: ml-air-api
-    # Volume mount can be root-owned after recreate; import .pt needs uid 1000 (appuser).
+    # appuser (1000). Do not call ml-air docker-entrypoint.sh here — it uses runuser and
+    # fails under rootless podman / when the process is already non-root.
+    # Artifact perms: mlair-artifact-init chowns volumes before api starts.
+    user: "1000:1000"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -e
         mkdir -p /mlair/artifacts/models /mlair/artifacts/datasets
-        chown -R 1000:1000 /mlair/artifacts/models /mlair/artifacts/datasets
-        exec /usr/local/bin/docker-entrypoint.sh sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8080"
+        cd /app
+        alembic upgrade head
+        exec uvicorn main:app --host 0.0.0.0 --port 8080
     environment:
       ML_AIR_REDIS_URL: redis://redis:6379/0
       ML_AIR_DATABASE_URL: postgresql://mlair:mlair@postgres:5432/mlair
@@ -84,6 +93,7 @@ services:
       ML_AIR_RUNTIME_REALTIME_BASE_URL: ${ML_AIR_RUNTIME_REALTIME_BASE_URL:-ws://localhost:8001}
       ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK: ${ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK:-0}
       ML_AIR_STRICT_DATASET_VERSION_REQUIRED: ${ML_AIR_STRICT_DATASET_VERSION_REQUIRED:-1}
+      ML_AIR_TASK_EXECUTION_MODE: ${ML_AIR_TASK_EXECUTION_MODE:-external}
     ports:
       - "${ML_AIR_API_PORT:-8080}:8080"
     volumes:
@@ -112,6 +122,7 @@ services:
     image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-scheduler:${MLAIR_TAG:-latest}
     pull_policy: always
     environment:
+      ML_AIR_TASK_EXECUTION_MODE: ${ML_AIR_TASK_EXECUTION_MODE:-external}
       ML_AIR_REDIS_URL: redis://redis:6379/0
       ML_AIR_DATABASE_URL: postgresql://mlair:mlair@postgres:5432/mlair
       ML_AIR_MANIFEST_SIGNING_KEY: ${ML_AIR_MANIFEST_SIGNING_KEY:-mlair-dev-manifest-signing-key}
@@ -171,6 +182,35 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Leases cv_yolo_train plugin tasks (Hub Train requires tasks[].plugin in pipeline config).
+  mlair-cv-train-worker:
+    image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
+    container_name: mlair-cv-train-worker
+    command: python scripts/mlair_cv_train_worker.py
+    environment:
+      PYTHONPATH: /app
+      MLAIR_API_BASE_URL: http://api:8080
+      MLAIR_WORKER_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
+      MLAIR_WORKER_ID: ${MLAIR_CV_TRAIN_WORKER_ID:-cv-yolo-train-worker}
+      MLAIR_CAPABILITIES: cv_yolo_train
+      CV_ARTIFACT_ROOT: /app/artifacts
+      CV_MLAIR_API_URL: http://api:8080
+      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN:-admin-token}
+      CV_MLAIR_TENANT: ${CV_MLAIR_TENANT:-default}
+      CV_MLAIR_PROJECT: ${CV_MLAIR_PROJECT:-default_project}
+      CV_MLAIR_MODEL_ARTIFACT_MOUNT: /mlair/artifacts
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./weights:/app/weights
+      - ml_air_model_artifacts:/mlair/artifacts/models:ro
+      - ml_air_dataset_artifacts:/mlair/artifacts/datasets:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      cv-api:
+        condition: service_healthy
+    restart: unless-stopped
+
   frontend:
     image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-frontend:${MLAIR_TAG:-latest}
     pull_policy: always
@@ -209,6 +249,7 @@ services:
       CV_MLAIR_MODEL_ID: ${CV_MLAIR_MODEL_ID:-}
       CV_MLAIR_AUTO_TRAIN: ${CV_MLAIR_AUTO_TRAIN:-0}
       CV_MLAIR_TRAIN_PIPELINE_ID: ${CV_MLAIR_TRAIN_PIPELINE_ID:-cv-yolo-vehicle-train}
+      CV_MLAIR_PIPELINE_MODE: ${CV_MLAIR_PIPELINE_MODE:-plugin}
       CV_MLAIR_BOOTSTRAP_PIPELINE: ${CV_MLAIR_BOOTSTRAP_PIPELINE:-1}
       CV_MLAIR_TRAIN_CALLBACK_TOKEN: ${CV_MLAIR_TRAIN_CALLBACK_TOKEN:-admin-token}
       CV_MLAIR_PROMOTE_WEBHOOK_TOKEN: ${CV_MLAIR_PROMOTE_WEBHOOK_TOKEN:-admin-token}

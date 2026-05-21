@@ -4,6 +4,7 @@
 #
 ARG MLAIR_API_IMAGE=ghcr.io/phu142857/ml-air-api:latest
 FROM ${MLAIR_API_IMAGE}
+# Build: docker compose build api  (context = repo root)
 
 USER root
 COPY integrations/mlair_cv_plugins /opt/mlair_cv_plugins

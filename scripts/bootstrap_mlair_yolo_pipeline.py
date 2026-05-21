@@ -31,9 +31,10 @@ def main() -> int:
     parser.add_argument(
         "--mode",
         choices=("http", "plugin"),
-        default="http",
-        help="http = executor HTTP task (default); plugin = external worker + cv_yolo_train",
+        default=settings.mlair_pipeline_mode,
+        help="plugin = Hub Train UI (default); http = executor HTTP only",
     )
+    parser.add_argument("--force", action="store_true", help="Publish new version even if config matches")
     parser.add_argument("--map-models", action="store_true", help="Map all registry models to this pipeline")
     args = parser.parse_args()
 
@@ -41,6 +42,8 @@ def main() -> int:
         map_models=args.map_models,
         required_size=args.required_size,
         train_url=args.train_url,
+        mode=args.mode,
+        force_republish=args.force,
     )
     print(json.dumps(out, indent=2))
     if not out.get("ok"):

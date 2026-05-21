@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from mlair_adapter.model_client import ModelClient
 from mlair_adapter.model_sync import ModelSyncService
-from mlair_adapter.pipeline_bootstrap import ensure_cv_yolo_pipeline
+from mlair_adapter.pipeline_bootstrap import ensure_cv_yolo_pipeline, map_all_models_to_pipeline
 from mlair_adapter.registry_sync import sync_mlair_registry_core
 from shared.model_resolve import REGISTRY_PREFIX, ensure_registry_weights
 from shared.schemas import RegistryModelOption, RegistryModelsResponse
@@ -67,12 +67,30 @@ def registry_sync_core(force: bool = False) -> dict:
 
 
 @router.post("/pipeline/bootstrap")
-def bootstrap_mlair_pipeline() -> dict:
-    """Register ``cv-yolo-vehicle-train`` pipeline version on MLAir (idempotent)."""
-    out = ensure_cv_yolo_pipeline(map_models=True)
+def bootstrap_mlair_pipeline(force: bool = False) -> dict:
+    """Register ``cv-yolo-vehicle-train`` (plugin mode by default; republish if latest is HTTP-only)."""
+    out = ensure_cv_yolo_pipeline(map_models=True, force_republish=force)
     if not out.get("ok"):
         raise HTTPException(status_code=503, detail=out.get("reason", "bootstrap_failed"))
     return out
+
+
+@router.post("/pipeline/map-models")
+def map_models_to_train_pipeline() -> dict:
+    """Map all registry models → ``cv-yolo-vehicle-train`` (fixes Hub Train with model unresolved)."""
+    out = map_all_models_to_pipeline()
+    if not out.get("ok"):
+        raise HTTPException(status_code=503, detail=out.get("reason", "mapping_failed"))
+    return out
+
+
+@router.get("/models/{model_id}/resolved-pipeline")
+def get_resolved_pipeline(model_id: str) -> dict:
+    """Proxy MLAir resolved-pipeline for debugging Train with model."""
+    client = ModelClient()
+    if not client.enabled:
+        raise HTTPException(status_code=503, detail="MLAir not configured")
+    return client.get(f"{client._prefix()}/models/{model_id}/resolved-pipeline")
 
 
 @router.post("/models/{model_id}/sync-weights")

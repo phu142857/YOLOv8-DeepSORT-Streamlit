@@ -456,6 +456,13 @@ class ModelSyncService:
         self._save_state(state)
 
         ensure_registry_weights(model_id, stage=stage)
+        if settings.mlair_bootstrap_pipeline_on_startup:
+            try:
+                from mlair_adapter.pipeline_bootstrap import map_all_models_to_pipeline
+
+                map_all_models_to_pipeline()
+            except Exception as exc:
+                logger.debug("pipeline-mapping after push skipped: %s", exc)
         return {
             "spec": spec,
             "ok": True,
