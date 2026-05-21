@@ -15,18 +15,13 @@
         "headers": {
           "Content-Type": "application/json"
         },
+        "json_body_jsonpath": "$",
         "json_body": {
           "run_id": "{{ run_id }}",
           "task_id": "{{ task_id }}",
           "tenant_id": "{{ tenant_id }}",
           "project_id": "{{ project_id }}",
-          "trace_id": "{{ trace_id }}",
-          "model_id": "{{ context.model_id }}",
-          "mlair_model_id": "{{ context.mlair_model_id }}",
-          "dataset_id": "{{ context.dataset_id }}",
-          "dataset_version_id": "{{ context.dataset_version_id }}",
-          "artifact_uri": "{{ context.artifact_uri }}",
-          "base_weights_source": "{{ context.base_weights_source }}"
+          "trace_id": "{{ trace_id }}"
         },
         "secret_env": "CV_MLAIR_TRAIN_CALLBACK_TOKEN",
         "timeout_seconds": 7200

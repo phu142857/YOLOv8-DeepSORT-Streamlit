@@ -66,6 +66,12 @@ class MLAirClient:
         r.raise_for_status()
         return r.json() if r.content else {}
 
+    def put(self, path: str, json: dict[str, Any] | None = None) -> Any:
+        url = f"{self.base_url}{path}"
+        r = httpx.put(url, headers={**self._headers(), "Content-Type": "application/json"}, json=json, timeout=self.timeout)
+        r.raise_for_status()
+        return r.json() if r.content else {}
+
     def post_multipart(self, path: str, data: dict[str, str], files: dict[str, Any]) -> Any:
         url = f"{self.base_url}{path}"
         r = httpx.post(url, headers=self._headers(), data=data, files=files, timeout=self.timeout)

@@ -13,8 +13,20 @@ docker compose pull api scheduler executor frontend realtime postgres redis
 echo "Building CV workload image (first run may take several minutes)..."
 docker compose build cv-api
 
+echo "Fixing MLAir artifact volume ownership (import .pt → model versions)..."
+docker compose rm -f mlair-artifact-init 2>/dev/null || true
+docker compose run --rm mlair-artifact-init 2>/dev/null || docker compose up -d mlair-artifact-init
+
 echo "Starting stack..."
 docker compose up -d "$@"
+
+if [[ "${CV_SKIP_POST_BOOTSTRAP:-0}" != "1" ]]; then
+  echo ""
+  echo "Post-start: MLAir permissions + model sync + pipeline..."
+  ./scripts/post_stack_bootstrap.sh || {
+    echo "Post bootstrap failed (stack is up). Retry: ./scripts/post_stack_bootstrap.sh" >&2
+  }
+fi
 
 echo ""
 echo "  CV UI        http://localhost:${CV_UI_PORT:-8501}"

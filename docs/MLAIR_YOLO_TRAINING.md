@@ -57,6 +57,24 @@ USER appuser
 
 (Build context trỏ vào repo CV; COPY đường dẫn package.)
 
+## Pipeline không hiện trên Hub
+
+Hub chỉ liệt kê pipeline sau khi có **ít nhất một pipeline version** trong DB (`POST .../pipelines/{id}/versions`). Sync model **không** tự tạo pipeline.
+
+- Mặc định `CV_MLAIR_BOOTSTRAP_PIPELINE=1`: cv-api đăng ký `cv-yolo-vehicle-train` lúc start.
+- Tay (sau khi rebuild image có `examples/mlair/`):
+
+```bash
+docker exec cv-lifecycle-api python scripts/bootstrap_mlair_yolo_pipeline.py --map-models
+```
+
+Kiểm tra:
+
+```bash
+curl -sS -H "Authorization: Bearer admin-token" \
+  "http://localhost:8080/v1/tenants/default/projects/default_project/pipelines" | jq '.items'
+```
+
 ## Bước 2 — Đăng ký pipeline version (API MLAir)
 
 Pipeline id: **`cv-yolo-vehicle-train`**

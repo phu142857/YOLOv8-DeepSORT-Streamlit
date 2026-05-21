@@ -22,9 +22,15 @@ def load_cv_yolo_pipeline_config(
         config = json.loads(path.read_text(encoding="utf-8"))
     else:
         path = _PIPELINES_DIR / "cv-yolo-vehicle-train.http.config.json"
-        config = json.loads(path.read_text(encoding="utf-8"))
-        if cv_train_url:
-            config["tasks"][0]["http"]["url"] = cv_train_url.rstrip("/")
+        if path.is_file():
+            config = json.loads(path.read_text(encoding="utf-8"))
+            if cv_train_url:
+                config["tasks"][0]["http"]["url"] = cv_train_url.rstrip("/")
+        else:
+            config = cv_yolo_train_pipeline_config(
+                dataset_logical_name=dataset_logical_name,
+                cv_train_url=cv_train_url,
+            )
     if dataset_logical_name:
         for row in config.get("inputs") or []:
             if isinstance(row, dict) and "dataset" in row:
@@ -54,18 +60,13 @@ def cv_yolo_train_pipeline_config(
                     "method": "POST",
                     "url": train_url,
                     "headers": {"Content-Type": "application/json"},
+                    "json_body_jsonpath": "$",
                     "json_body": {
                         "run_id": "{{ run_id }}",
                         "task_id": "{{ task_id }}",
                         "tenant_id": "{{ tenant_id }}",
                         "project_id": "{{ project_id }}",
                         "trace_id": "{{ trace_id }}",
-                        "model_id": "{{ context.model_id }}",
-                        "mlair_model_id": "{{ context.mlair_model_id }}",
-                        "dataset_id": "{{ context.dataset_id }}",
-                        "dataset_version_id": "{{ context.dataset_version_id }}",
-                        "artifact_uri": "{{ context.artifact_uri }}",
-                        "base_weights_source": "{{ context.base_weights_source }}",
                     },
                     "secret_env": "CV_MLAIR_TRAIN_CALLBACK_TOKEN",
                     "timeout_seconds": 7200,

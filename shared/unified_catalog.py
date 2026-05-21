@@ -7,6 +7,7 @@ from typing import Any
 
 from mlair_adapter.model_client import ModelClient
 from mlair_adapter.model_sync import ModelSyncService
+from mlair_adapter.sync_metadata import read_version_sync_metadata
 from shared.model_resolve import REGISTRY_PREFIX, is_registry_model
 from shared.schemas import UnifiedModelOption, UnifiedModelsResponse
 from shared.settings import settings
@@ -55,6 +56,13 @@ def resolve_mlair_model_id(
         row = state.get(key) if isinstance(state, dict) else None
         if isinstance(row, dict) and row.get("model_id"):
             return str(row["model_id"])
+
+    parsed = parse_model_spec(raw)
+    if parsed:
+        m, ver = parsed
+        meta = read_version_sync_metadata(version_dir(settings.detection_model_dir, m, ver))
+        if meta and meta.mlair_model_id:
+            return meta.mlair_model_id
 
     if client.enabled:
         hub = client.find_model_by_name(model)

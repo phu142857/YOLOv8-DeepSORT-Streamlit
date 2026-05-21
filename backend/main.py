@@ -31,12 +31,12 @@ from backend.routes import (  # noqa: E402
     registry,
     uploads,
 )
-from mlair_adapter.model_sync import start_model_sync_background  # noqa: E402
+from mlair_adapter.registry_sync import start_registry_sync_background  # noqa: E402
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    start_model_sync_background()
+    start_registry_sync_background()
     yield
 
 

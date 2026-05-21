@@ -58,10 +58,19 @@ class Settings:
     mlair_sync_after_train: bool = _env_bool("CV_MLAIR_SYNC_AFTER_TRAIN", True)
     mlair_sync_stage: str = _env("CV_MLAIR_SYNC_STAGE", "production")
     mlair_sync_interval_sec: float = float(_env("CV_MLAIR_SYNC_INTERVAL_SEC", "300"))
+    # Vet-AI-style periodic registry resync (defaults 120s); falls back to sync_interval if unset.
+    mlair_registry_resync_seconds: float = float(
+        _env("CV_MLAIR_REGISTRY_RESYNC_SECONDS")
+        or _env("CV_MLAIR_SYNC_INTERVAL_SEC", "120")
+    )
+    mlair_registry_sync_at_startup: bool = _env_bool("CV_MLAIR_REGISTRY_SYNC_AT_STARTUP", True)
+    mlair_disk_sync_mode: str = _env("CV_MLAIR_DISK_SYNC_MODE", "metadata")  # metadata | state
+    mlair_disk_import_all_versions: bool = _env_bool("CV_MLAIR_DISK_IMPORT_ALL_VERSIONS", False)
     mlair_mirror_registry_to_local: bool = _env_bool("CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL", True)
     mlair_sync_state_path: Path = Path(_env("CV_MLAIR_SYNC_STATE_PATH", "artifacts/.mlair_model_sync_state.json"))
     # MLAir pipeline `cv-yolo-vehicle-train` (HTTP task → /api/v1/mlair/train/execute)
     mlair_train_pipeline_id: str = _env("CV_MLAIR_TRAIN_PIPELINE_ID", "cv-yolo-vehicle-train")
+    mlair_bootstrap_pipeline_on_startup: bool = _env_bool("CV_MLAIR_BOOTSTRAP_PIPELINE", True)
     mlair_train_callback_token: str = _env("CV_MLAIR_TRAIN_CALLBACK_TOKEN", "admin-token")
     mlair_train_base_model_spec: str = _env("CV_MLAIR_TRAIN_BASE_MODEL", "yolov8n/base")
     mlair_train_epochs: int = int(_env("CV_MLAIR_TRAIN_EPOCHS", "10"))

@@ -31,6 +31,7 @@ COPY shared ./shared
 COPY inference ./inference
 COPY workers ./workers
 COPY mlair_adapter ./mlair_adapter
+COPY examples ./examples
 COPY scripts ./scripts
 
 RUN mkdir -p /app/artifacts /app/weights/detection

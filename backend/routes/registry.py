@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException
 
 from mlair_adapter.model_client import ModelClient
 from mlair_adapter.model_sync import ModelSyncService
+from mlair_adapter.pipeline_bootstrap import ensure_cv_yolo_pipeline
+from mlair_adapter.registry_sync import sync_mlair_registry_core
 from shared.model_resolve import REGISTRY_PREFIX, ensure_registry_weights
 from shared.schemas import RegistryModelOption, RegistryModelsResponse
 from shared.settings import settings
@@ -41,18 +43,36 @@ def list_registry_models() -> RegistryModelsResponse:
 
 
 @router.post("/models/sync-all")
-def sync_all_local_models() -> dict:
+def sync_all_local_models(force: bool = False) -> dict:
     """Full bidirectional sync: local canonical ↔ MLAir production (base + production folders)."""
     svc = ModelSyncService()
     if not svc.enabled:
         raise HTTPException(status_code=503, detail="MLAir model sync not configured")
-    return svc.sync_full()
+    return svc.sync_full(force=force)
 
 
 @router.post("/models/sync-full")
-def sync_full_models() -> dict:
-    """Alias for :func:`sync_all_local_models` — true two-way sync."""
-    return sync_all_local_models()
+def sync_full_models(force: bool = False) -> dict:
+    """Alias for :func:`sync_all_local_models` — true two-way sync. Use ``?force=1`` after ``down -v``."""
+    return sync_all_local_models(force=force)
+
+
+@router.post("/sync-core")
+def registry_sync_core(force: bool = False) -> dict:
+    """Vet-AI-style registry sync: disk weights → MLAir + optional pipeline mapping."""
+    out = sync_mlair_registry_core(force=force, map_pipeline=True)
+    if not out.get("ok"):
+        raise HTTPException(status_code=503, detail=out.get("reason", "sync_disabled"))
+    return out
+
+
+@router.post("/pipeline/bootstrap")
+def bootstrap_mlair_pipeline() -> dict:
+    """Register ``cv-yolo-vehicle-train`` pipeline version on MLAir (idempotent)."""
+    out = ensure_cv_yolo_pipeline(map_models=True)
+    if not out.get("ok"):
+        raise HTTPException(status_code=503, detail=out.get("reason", "bootstrap_failed"))
+    return out
 
 
 @router.post("/models/{model_id}/sync-weights")

@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from mlair_adapter.model_client import ModelClient
+from mlair_adapter.sync_metadata import (
+    VersionSyncMetadata,
+    is_disk_version_importable,
+    read_version_sync_metadata,
+    write_version_sync_metadata,
+)
 from shared.model_resolve import ensure_registry_weights
 from shared.settings import settings
 from shared.weights_catalog import (
@@ -54,6 +60,51 @@ class ModelSyncService:
     def load_sync_state(self) -> dict[str, Any]:
         """Persisted sync map (spec → model_id, sha256, aligned)."""
         return self._load_state()
+
+    def _hub_has_model(self, model_id: str) -> bool:
+        if not model_id:
+            return False
+        try:
+            row = self._client.get_model(model_id)
+            return bool(row and row.get("model_id"))
+        except Exception:
+            return False
+
+    def _reconcile_state_with_hub(self, state: dict[str, Any]) -> int:
+        """
+        Drop stale entries when Hub was reset (``docker compose down -v``) but
+        ``artifacts/.mlair_model_sync_state.json`` on the host still exists.
+        """
+        try:
+            hub_ids = {
+                str(r.get("model_id"))
+                for r in self._client.list_models()
+                if r.get("model_id")
+            }
+        except Exception:
+            return 0
+
+        removed = 0
+        for key in list(state.keys()):
+            row = state.get(key)
+            if not isinstance(row, dict):
+                continue
+            mid = str(row.get("model_id") or "")
+            if mid and mid not in hub_ids:
+                state.pop(key, None)
+                removed += 1
+                continue
+            if key.startswith("registry:"):
+                rid = key.split(":", 1)[-1]
+                if rid and rid not in hub_ids:
+                    state.pop(key, None)
+                    removed += 1
+        if removed:
+            logger.info(
+                "pruned %s stale model sync state entries (Hub empty or DB was recreated)",
+                removed,
+            )
+        return removed
 
     def resolve_model_id_for_spec(self, model_spec_or_name: str) -> str | None:
         from shared.unified_catalog import resolve_mlair_model_id
@@ -206,15 +257,35 @@ class ModelSyncService:
         if not weights.is_file():
             return {"spec": spec, "skipped": True, "reason": "missing_weights"}
 
+        if not is_disk_version_importable(entry.version):
+            return {"spec": spec, "skipped": True, "reason": "non_canonical_disk_version"}
+
         digest = _sha256_file(weights)
         state = state if state is not None else self._load_state()
-        prev = state.get(spec) or {}
-        if prev.get("sha256") == digest:
-            reg = state.get(f"registry:{prev.get('model_id')}") if prev.get("model_id") else {}
-            if reg.get("sha256") == digest:
-                return {"spec": spec, "skipped": True, "reason": "already_aligned"}
+        version_dir_path = weights.parent
+        hub_row = self._client.find_model_by_name(entry.model)
 
-        row = self._client.find_model_by_name(entry.model)
+        if settings.mlair_disk_sync_mode == "metadata":
+            disk_meta = read_version_sync_metadata(version_dir_path)
+            if (
+                disk_meta
+                and disk_meta.sha256 == digest
+                and hub_row
+                and str(hub_row.get("model_id") or "") == disk_meta.mlair_model_id
+                and self._hub_has_model(disk_meta.mlair_model_id)
+            ):
+                return {"spec": spec, "skipped": True, "reason": "already_aligned_metadata"}
+
+        prev = state.get(spec) or {}
+        if prev.get("sha256") == digest and hub_row:
+            model_id_prev = str(prev.get("model_id") or "")
+            hub_id = str(hub_row.get("model_id") or "")
+            if model_id_prev == hub_id and self._hub_has_model(hub_id):
+                reg = state.get(f"registry:{hub_id}") or {}
+                if reg.get("sha256") == digest:
+                    return {"spec": spec, "skipped": True, "reason": "already_aligned"}
+
+        row = hub_row
         if row and row.get("model_id"):
             model_id = str(row["model_id"])
             action = "import_version"
@@ -231,6 +302,23 @@ class ModelSyncService:
             out = self._client.import_version(model_id, weights, stage=stage)
 
         version = int(out.get("version") or 0)
+        version_row = self._client.get_version(model_id, version) if version else {}
+        artifact_uri = str(version_row.get("artifact_uri") or "")
+        write_version_sync_metadata(
+            version_dir_path,
+            meta=VersionSyncMetadata(
+                cv_disk_version=entry.version,
+                cv_model=entry.model,
+                cv_spec=spec,
+                sha256=digest,
+                mlair_model_id=model_id,
+                mlair_version=version,
+                mlair_version_id=str(version_row.get("version_id") or ""),
+                mlair_artifact_uri=artifact_uri,
+                mlair_stage=stage,
+                synced_at=time.time(),
+            ),
+        )
         self.mirror_production_to_canonical_local(model_id, model_name=entry.model, version=version, stage=stage)
         self._update_state_aligned(
             state,
@@ -273,7 +361,7 @@ class ModelSyncService:
         self._save_state(state)
         return results
 
-    def sync_full(self, *, root: Path | None = None) -> dict[str, Any]:
+    def sync_full(self, *, root: Path | None = None, force: bool = False) -> dict[str, Any]:
         """
         True bidirectional sync:
         1. Push local canonical weights that changed.
@@ -284,6 +372,14 @@ class ModelSyncService:
 
         root = Path(root or settings.detection_model_dir)
         state = self._load_state()
+        pruned = self._reconcile_state_with_hub(state)
+        if pruned:
+            self._save_state(state)
+        if force:
+            for key in list(state.keys()):
+                if not key.startswith("registry:"):
+                    state.pop(key, None)
+            self._save_state(state)
 
         with _SYNC_LOCK:
             push_results = self.sync_push_local_models(root=root, state=state)
@@ -307,6 +403,8 @@ class ModelSyncService:
         return {
             "ok": True,
             "mode": "full",
+            "force": force,
+            "state_pruned": pruned,
             "root": str(root),
             "pushed": pushed,
             "pulled": pulled,
@@ -350,6 +448,23 @@ class ModelSyncService:
         self._save_state(state)
         ensure_registry_weights(model_id, stage=stage)
 
+        base_dir = mirrored["base"].parent
+        write_version_sync_metadata(
+            base_dir,
+            meta=VersionSyncMetadata(
+                cv_disk_version="base",
+                cv_model=model_name,
+                cv_spec=model_spec(model_name, "base"),
+                sha256=str(mirrored["sha256"]),
+                mlair_model_id=model_id,
+                mlair_version=version,
+                mlair_version_id=str(row.get("version_id") or ""),
+                mlair_artifact_uri=str(row.get("artifact_uri") or ""),
+                mlair_stage=stage,
+                synced_at=time.time(),
+            ),
+        )
+
         return {
             "ok": True,
             "model_id": model_id,
@@ -359,6 +474,21 @@ class ModelSyncService:
             "local_base": str(mirrored["base"]),
             "local_production": str(mirrored["production"]),
         }
+
+
+def sync_training_checkpoint_to_mlair(
+    model_id: str,
+    checkpoint_path: Path,
+    *,
+    model_name: str | None = None,
+    disk_version: str = "base",
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Vet-AI ``sync_training_directory_to_mlair`` — import + pull to canonical local + ``mlair-sync.json``."""
+    svc = ModelSyncService()
+    if not svc.enabled:
+        return {"ok": False, "reason": "sync_disabled"}
+    return svc.sync_after_training(model_id, run_id=run_id)
 
     def mirror_registry_version_to_local(
         self,
@@ -390,31 +520,44 @@ class ModelSyncService:
             time.sleep(interval)
 
 
+def _hub_models_missing_versions(client: ModelClient | None = None) -> bool:
+    """True when registry rows exist but no imported version (common after permission 500)."""
+    client = client or ModelClient()
+    if not client.enabled:
+        return False
+    try:
+        for row in client.list_models():
+            mid = str(row.get("model_id") or "")
+            if not mid:
+                continue
+            if row.get("production_version") is not None:
+                continue
+            if not client.list_versions(mid):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _wait_for_mlair_api(*, attempts: int = 30, delay_sec: float = 2.0) -> bool:
+    client = ModelClient()
+    if not client.enabled:
+        return False
+    import time
+
+    for i in range(attempts):
+        try:
+            client.get(f"{client._prefix()}/models", params={"limit": 1})
+            return True
+        except Exception as exc:
+            if i == 0 or (i + 1) % 5 == 0:
+                logger.debug("waiting for MLAir API (%s/%s): %s", i + 1, attempts, exc)
+            time.sleep(delay_sec)
+    return False
+
+
 def start_model_sync_background() -> None:
-    if not settings.mlair_auto_sync_models:
-        return
-    if not ModelClient().enabled:
-        logger.info("MLAir model auto-sync disabled (API not configured)")
-        return
+    """Backward-compatible entry → Vet-AI-style :func:`registry_sync.start_registry_sync_background`."""
+    from mlair_adapter.registry_sync import start_registry_sync_background
 
-    if settings.mlair_sync_on_startup:
-
-        def _startup() -> None:
-            try:
-                summary = ModelSyncService().sync_full()
-                logger.info(
-                    "MLAir full sync done: pushed=%s pulled=%s",
-                    summary.get("pushed"),
-                    summary.get("pulled"),
-                )
-            except Exception:
-                logger.exception("MLAir model startup sync failed")
-
-        threading.Thread(target=_startup, name="mlair-model-sync-startup", daemon=True).start()
-
-    if settings.mlair_sync_interval_sec > 0:
-        threading.Thread(
-            target=ModelSyncService().run_background_sync_loop,
-            name="mlair-model-sync-loop",
-            daemon=True,
-        ).start()
+    start_registry_sync_background()
