@@ -4,14 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlair-cv-workload-plugins"
-version = "0.1.0"
-description = "CV workload YOLO plugin for MLAir (install into ml-air-api venv — see docs/MLAIR_YOLO_TRAINING.md)."
+version = "0.2.0"
+description = "CV workload plugins for MLAir lifecycle DAG (install into ml-air-api)."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
 [project.entry-points."mlair.plugins"]
-cv_yolo_train = "mlair_cv_plugins.cv_yolo_train:CvYoloTrainPlugin"
+cv_yolo_prepare = "mlair_cv_plugins.cv_plugins:CvYoloPreparePlugin"
+cv_yolo_train = "mlair_cv_plugins.cv_plugins:CvYoloTrainPlugin"
+cv_yolo_eval = "mlair_cv_plugins.cv_plugins:CvYoloEvalPlugin"
+cv_yolo_gate = "mlair_cv_plugins.cv_plugins:CvYoloGatePlugin"
+cv_hard_example_mine = "mlair_cv_plugins.cv_plugins:CvHardExampleMinePlugin"
 
 [tool.setuptools.packages.find]
 where = ["."]

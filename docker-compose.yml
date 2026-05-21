@@ -46,12 +46,14 @@ services:
     volumes:
       - ml_air_dataset_artifacts:/datasets
       - ml_air_model_artifacts:/models
+      - cv_workload_artifacts:/cv-artifacts
     command:
       - sh
       - -c
       - |
-        mkdir -p /datasets /models
-        chown -R 1000:1000 /datasets /models
+        mkdir -p /datasets /models /cv-artifacts/jobs /cv-artifacts/uploads /cv-artifacts/mlair_pipeline_runs
+        mkdir -p /datasets/cv-runtime-frames
+        chown -R 1000:1000 /datasets /models /cv-artifacts
     restart: "no"
 
   api:
@@ -186,25 +188,34 @@ services:
   mlair-cv-train-worker:
     image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
     container_name: mlair-cv-train-worker
-    command: python scripts/mlair_cv_train_worker.py
+    command: python scripts/mlair_cv_pipeline_worker.py
     environment:
       PYTHONPATH: /app
       MLAIR_API_BASE_URL: http://api:8080
       MLAIR_WORKER_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
-      MLAIR_WORKER_ID: ${MLAIR_CV_TRAIN_WORKER_ID:-cv-yolo-train-worker}
-      MLAIR_CAPABILITIES: cv_yolo_train
+      MLAIR_WORKER_ID: ${MLAIR_CV_TRAIN_WORKER_ID:-cv-lifecycle-worker}
+      MLAIR_CAPABILITIES: cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine
+      CV_MLAIR_LIFECYCLE_IMPORT_STAGE: ${CV_MLAIR_LIFECYCLE_IMPORT_STAGE:-staging}
+      CV_MLAIR_LIFECYCLE_AUTO_PROMOTE: ${CV_MLAIR_LIFECYCLE_AUTO_PROMOTE:-1}
+      CV_MLAIR_GATE_MIN_MAP_DELTA: ${CV_MLAIR_GATE_MIN_MAP_DELTA:-0.0}
+      CV_MLAIR_HARD_EXAMPLE_DATASET: ${CV_MLAIR_HARD_EXAMPLE_DATASET:-cv-traffic-hard-examples}
+      CV_MLAIR_HARD_EXAMPLE_MAX_CONF: ${CV_MLAIR_HARD_EXAMPLE_MAX_CONF:-0.35}
+      CV_MLAIR_PERSIST_INGEST_FRAMES: ${CV_MLAIR_PERSIST_INGEST_FRAMES:-1}
       CV_ARTIFACT_ROOT: /app/artifacts
+      CV_API_BASE_URL: http://cv-api:8000
       CV_MLAIR_API_URL: http://api:8080
       CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN:-admin-token}
       CV_MLAIR_TENANT: ${CV_MLAIR_TENANT:-default}
       CV_MLAIR_PROJECT: ${CV_MLAIR_PROJECT:-default_project}
       CV_MLAIR_MODEL_ARTIFACT_MOUNT: /mlair/artifacts
     volumes:
-      - ./artifacts:/app/artifacts
+      - cv_workload_artifacts:/app/artifacts
       - ./weights:/app/weights
       - ml_air_model_artifacts:/mlair/artifacts/models:ro
-      - ml_air_dataset_artifacts:/mlair/artifacts/datasets:ro
+      - ml_air_dataset_artifacts:/mlair/artifacts/datasets
     depends_on:
+      mlair-artifact-init:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
       cv-api:
@@ -248,8 +259,11 @@ services:
       CV_MLAIR_AUTO_MATERIALIZE: ${CV_MLAIR_AUTO_MATERIALIZE:-1}
       CV_MLAIR_MODEL_ID: ${CV_MLAIR_MODEL_ID:-}
       CV_MLAIR_AUTO_TRAIN: ${CV_MLAIR_AUTO_TRAIN:-0}
-      CV_MLAIR_TRAIN_PIPELINE_ID: ${CV_MLAIR_TRAIN_PIPELINE_ID:-cv-yolo-vehicle-train}
+      CV_MLAIR_TRAIN_PIPELINE_ID: ${CV_MLAIR_TRAIN_PIPELINE_ID:-cv-yolo-lifecycle-train}
       CV_MLAIR_PIPELINE_MODE: ${CV_MLAIR_PIPELINE_MODE:-plugin}
+      CV_MLAIR_LIFECYCLE_IMPORT_STAGE: ${CV_MLAIR_LIFECYCLE_IMPORT_STAGE:-staging}
+      CV_MLAIR_LIFECYCLE_AUTO_PROMOTE: ${CV_MLAIR_LIFECYCLE_AUTO_PROMOTE:-1}
+      CV_MLAIR_GATE_MIN_MAP_DELTA: ${CV_MLAIR_GATE_MIN_MAP_DELTA:-0.0}
       CV_MLAIR_BOOTSTRAP_PIPELINE: ${CV_MLAIR_BOOTSTRAP_PIPELINE:-1}
       CV_MLAIR_TRAIN_CALLBACK_TOKEN: ${CV_MLAIR_TRAIN_CALLBACK_TOKEN:-admin-token}
       CV_MLAIR_PROMOTE_WEBHOOK_TOKEN: ${CV_MLAIR_PROMOTE_WEBHOOK_TOKEN:-admin-token}
@@ -266,11 +280,13 @@ services:
       CV_MLAIR_DISK_IMPORT_ALL_VERSIONS: ${CV_MLAIR_DISK_IMPORT_ALL_VERSIONS:-0}
       CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL: ${CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL:-1}
       CV_MLAIR_MODEL_ARTIFACT_MOUNT: /mlair/artifacts
+      CV_MLAIR_PERSIST_INGEST_FRAMES: ${CV_MLAIR_PERSIST_INGEST_FRAMES:-1}
       CV_PERSIST_JOBS: ${CV_PERSIST_JOBS:-1}
     volumes:
-      - ./artifacts:/app/artifacts
+      - cv_workload_artifacts:/app/artifacts
       - ./weights:/app/weights
       - ml_air_model_artifacts:/mlair/artifacts/models:ro
+      - ml_air_dataset_artifacts:/mlair/artifacts/datasets
     ports:
       - "${CV_API_PORT:-8000}:8000"
     healthcheck:
@@ -280,6 +296,8 @@ services:
       retries: 12
       start_period: 180s
     depends_on:
+      mlair-artifact-init:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
     restart: unless-stopped
@@ -306,3 +324,5 @@ volumes:
   ml_air_pgdata:
   ml_air_dataset_artifacts:
   ml_air_model_artifacts:
+  # CV jobs/uploads/pipeline state — shared by cv-api + train worker (not ./artifacts on host).
+  cv_workload_artifacts:

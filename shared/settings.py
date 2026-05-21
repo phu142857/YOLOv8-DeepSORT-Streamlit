@@ -19,6 +19,9 @@ def _env_bool(key: str, default: bool = True) -> bool:
 @dataclass(frozen=True)
 class Settings:
     artifact_root: Path = Path(_env("CV_ARTIFACT_ROOT", "artifacts"))
+    # Copy ingested frames into MLAir dataset volume (file:// URIs) — required for cross-container train.
+    mlair_persist_ingest_frames: bool = _env_bool("CV_MLAIR_PERSIST_INGEST_FRAMES", True)
+    mlair_runtime_frames_subdir: str = _env("CV_MLAIR_RUNTIME_FRAMES_SUBDIR", "cv-runtime-frames")
     api_host: str = _env("CV_API_HOST", "0.0.0.0")
     api_port: int = int(_env("CV_API_PORT", "8000"))
     api_base_url: str = _env("CV_API_BASE_URL", "http://127.0.0.1:8000")
@@ -70,7 +73,16 @@ class Settings:
     mlair_sync_state_path: Path = Path(_env("CV_MLAIR_SYNC_STATE_PATH", "artifacts/.mlair_model_sync_state.json"))
     # MLAir pipeline cv-yolo-vehicle-train: plugin (Hub Train UI) | http (executor-only, Hub blocks train)
     mlair_pipeline_mode: str = _env("CV_MLAIR_PIPELINE_MODE", "plugin").strip().lower()
-    mlair_train_pipeline_id: str = _env("CV_MLAIR_TRAIN_PIPELINE_ID", "cv-yolo-vehicle-train")
+    # Phase B lifecycle DAG (prepare → train → eval → gate)
+    mlair_train_pipeline_id: str = _env("CV_MLAIR_TRAIN_PIPELINE_ID", "cv-yolo-lifecycle-train")
+    mlair_legacy_train_pipeline_id: str = _env("CV_MLAIR_LEGACY_TRAIN_PIPELINE_ID", "cv-yolo-vehicle-train")
+    mlair_hard_example_pipeline_id: str = _env("CV_MLAIR_HARD_EXAMPLE_PIPELINE_ID", "cv-hard-example-mine")
+    mlair_hard_example_dataset_name: str = _env("CV_MLAIR_HARD_EXAMPLE_DATASET", "cv-traffic-hard-examples")
+    mlair_lifecycle_import_stage: str = _env("CV_MLAIR_LIFECYCLE_IMPORT_STAGE", "staging")
+    mlair_lifecycle_auto_promote: bool = _env_bool("CV_MLAIR_LIFECYCLE_AUTO_PROMOTE", True)
+    mlair_gate_min_map_delta: float = float(_env("CV_MLAIR_GATE_MIN_MAP_DELTA", "0.0"))
+    mlair_hard_example_max_conf: float = float(_env("CV_MLAIR_HARD_EXAMPLE_MAX_CONF", "0.35"))
+    mlair_hard_example_max_scan: int = int(_env("CV_MLAIR_HARD_EXAMPLE_MAX_SCAN", "500"))
     mlair_bootstrap_pipeline_on_startup: bool = _env_bool("CV_MLAIR_BOOTSTRAP_PIPELINE", True)
     mlair_train_callback_token: str = _env("CV_MLAIR_TRAIN_CALLBACK_TOKEN", "admin-token")
     # MLAir Hub promote → pull production into weights/detection (webhook + periodic pull).

@@ -1,5 +1,7 @@
 # MLAir — train YOLO thật từ dữ liệu user (đúng quy trình framework)
 
+**Phase B (lifecycle DAG):** xem [MLAIR_LIFECYCLE_PIPELINE.md](./MLAIR_LIFECYCLE_PIPELINE.md) — `cv-yolo-lifecycle-train` (prepare → train → eval → gate) + `cv-hard-example-mine`.
+
 Tài liệu MLAir gốc (đọc trước khi sửa code):
 
 - [Create Plugin](https://github.com/phu142857/ml-air/blob/main/docs/guides/create-plugin.md)

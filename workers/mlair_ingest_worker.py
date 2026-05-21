@@ -40,6 +40,7 @@ class MLAirIngestWorker:
                 dataset_name=settings.mlair_dataset_name,
                 dataset_id=ctx.metadata.get("mlair_dataset_id"),
                 source_file=source_file,
+                public_base_url=settings.api_base_url,
                 auto_materialize=settings.mlair_auto_materialize,
             )
             ctx.metadata["mlair_ingest"] = result

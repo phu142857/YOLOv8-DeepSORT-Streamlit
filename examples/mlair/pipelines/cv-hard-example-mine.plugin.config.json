@@ -1,0 +1,15 @@
+{
+  "inputs": [
+    {
+      "dataset": "cv-traffic-frames",
+      "required_size": 1
+    }
+  ],
+  "tasks": [
+    {
+      "id": "mine",
+      "plugin": "cv_hard_example_mine",
+      "plugin_version": ">=0.1.0,<3.0.0"
+    }
+  ]
+}

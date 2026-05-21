@@ -7,12 +7,16 @@ import hashlib
 import io
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from mlair_adapter.base_client import MLAirClient, items_from_response
+from mlair_adapter.model_client import MLAIR_ARTIFACT_ROOT
+from shared.artifacts import ArtifactStore
 from shared.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -115,6 +119,23 @@ class DatasetClient(MLAirClient):
         """Alias for threshold-gated materialize (legacy callers)."""
         return self.materialize_when_threshold_met(dataset_id)
 
+    def _mlair_runtime_frames_dir(self, job_id: str) -> Path:
+        """Shared MLAir dataset volume path (survives container recreate; visible to train worker)."""
+        root = Path(settings.mlair_model_artifact_mount) / "datasets"
+        return (root / settings.mlair_runtime_frames_subdir / job_id).resolve()
+
+    def persist_frame_to_mlair_volume(self, job_id: str, frame_path: Path) -> str | None:
+        """Copy frame into ``ml_air_dataset_artifacts``; return ``file://`` URI or None if mount missing."""
+        datasets_root = Path(settings.mlair_model_artifact_mount) / "datasets"
+        if not datasets_root.exists():
+            logger.warning("MLAir datasets mount not found at %s", datasets_root)
+            return None
+        dest_dir = self._mlair_runtime_frames_dir(job_id)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / frame_path.name
+        shutil.copy2(frame_path, dest)
+        return f"file://{dest}"
+
     def build_frame_manifest_csv(
         self,
         job_id: str,
@@ -122,15 +143,23 @@ class DatasetClient(MLAirClient):
         *,
         public_base_url: str | None = None,
         source_file: str = "",
+        persist_to_mlair: bool | None = None,
     ) -> tuple[Path, int]:
-        """Write manifest CSV; image_uri is fetchable URL when public_base_url is set."""
+        """Write manifest CSV; default URIs are ``file://`` on MLAir dataset volume (container storage)."""
         frames_dir = Path(frames_dir)
         rows: list[dict[str, str]] = []
         base = (public_base_url or settings.api_base_url).rstrip("/")
+        use_mlair_store = (
+            settings.mlair_persist_ingest_frames if persist_to_mlair is None else persist_to_mlair
+        )
 
         for frame_path in sorted(frames_dir.glob("*.jpg")):
             frame_index = frame_path.stem
-            image_uri = f"{base}/api/v1/jobs/{job_id}/frames/{frame_path.name}"
+            image_uri: str | None = None
+            if use_mlair_store:
+                image_uri = self.persist_frame_to_mlair_volume(job_id, frame_path)
+            if not image_uri:
+                image_uri = f"{base}/api/v1/jobs/{job_id}/frames/{frame_path.name}"
             rows.append(
                 {
                     "image_uri": image_uri,
@@ -269,6 +298,80 @@ class DatasetClient(MLAirClient):
     def download_version_csv(self, version_id: str) -> bytes:
         return self.get_bytes(f"{self._prefix()}/dataset-versions/{version_id}/download")
 
+    @staticmethod
+    def _normalize_image_fetch_uri(uri: str) -> str:
+        """Rewrite host-only URLs saved as localhost so Docker workers reach cv-api."""
+        base = settings.api_base_url.rstrip("/")
+        for prefix in (
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+            "https://127.0.0.1:8000",
+            "https://localhost:8000",
+        ):
+            if uri.startswith(prefix):
+                return base + uri[len(prefix) :]
+        return uri
+
+    @staticmethod
+    def _copy_frame_from_job_artifacts(row: dict[str, Any], dest: Path) -> bool:
+        """Prefer local ``artifacts/jobs/{job_id}/frames/`` (same volume as cv-api/worker)."""
+        job_id = str(row.get("job_id") or "").strip()
+        if not job_id:
+            return False
+        layout = ArtifactStore().job_layout(job_id)
+        frames_dir = layout["frames"]
+        candidates: list[Path] = []
+        artifact_path = str(row.get("artifact_path") or "").strip()
+        frame_index = str(row.get("frame_index") or "").strip()
+        if artifact_path:
+            candidates.append(frames_dir / Path(artifact_path).name)
+        if frame_index:
+            candidates.append(frames_dir / f"{frame_index}.jpg")
+            if frame_index.isdigit():
+                candidates.append(frames_dir / f"{frame_index.zfill(6)}.jpg")
+        for src in candidates:
+            if src.is_file():
+                dest.write_bytes(src.read_bytes())
+                return True
+        return False
+
+    @staticmethod
+    def _fetch_uri_to_file(uri: str, dest: Path) -> bool:
+        uri = (uri or "").strip()
+        if not uri:
+            return False
+        if uri.startswith("http://") or uri.startswith("https://"):
+            fetch_uri = DatasetClient._normalize_image_fetch_uri(uri)
+            try:
+                r = httpx.get(fetch_uri, timeout=60.0)
+                r.raise_for_status()
+                dest.write_bytes(r.content)
+                return True
+            except httpx.HTTPError as exc:
+                logger.warning("HTTP fetch failed %s: %s", fetch_uri, exc)
+                return False
+        parsed = urlparse(uri)
+        if parsed.scheme == "file":
+            src = Path(parsed.path)
+            if src.is_file():
+                dest.write_bytes(src.read_bytes())
+                return True
+            # file:///mlair/artifacts/datasets/... when volume mounted at /mlair/artifacts
+            mount = Path(settings.mlair_model_artifact_mount)
+            if str(parsed.path).startswith("/mlair/"):
+                try:
+                    alt = mount.parent / Path(parsed.path).relative_to(MLAIR_ARTIFACT_ROOT)
+                    if alt.is_file():
+                        dest.write_bytes(alt.read_bytes())
+                        return True
+                except ValueError:
+                    pass
+        src = Path(uri)
+        if src.is_file():
+            dest.write_bytes(src.read_bytes())
+            return True
+        return False
+
     def fetch_version_frames(
         self,
         version_id: str,
@@ -299,26 +402,28 @@ class DatasetClient(MLAirClient):
             if not uri:
                 continue
 
-            frame_idx = row.get("frame_index", f"{downloaded:06d}")
-            out_name = f"{frame_idx}.jpg"
+            frame_idx = str(row.get("frame_index") or f"{downloaded:06d}").strip()
+            out_name = f"{Path(frame_idx).stem}.jpg"
             dest = dest_dir / out_name
 
-            if uri.startswith("http://") or uri.startswith("https://"):
-                r = httpx.get(uri, timeout=60.0)
-                r.raise_for_status()
-                dest.write_bytes(r.content)
-            else:
-                src = Path(uri)
-                if src.is_file():
-                    dest.write_bytes(src.read_bytes())
-                else:
-                    logger.warning("Skipping non-fetchable uri: %s", uri)
-                    continue
+            ok = self._copy_frame_from_job_artifacts(row, dest)
+            if not ok:
+                ok = self._fetch_uri_to_file(uri, dest)
+            if not ok:
+                logger.warning(
+                    "skip frame job_id=%s uri=%s (local artifacts + HTTP fetch failed)",
+                    row.get("job_id"),
+                    uri[:120],
+                )
+                continue
 
             downloaded += 1
 
         if downloaded == 0:
-            raise ValueError(f"no frames downloaded from version {version_id}")
+            raise ValueError(
+                f"no frames downloaded from version {version_id} "
+                "(check job artifacts under artifacts/jobs/ or CV_API_BASE_URL for ingest)"
+            )
 
         manifest_copy = dest_dir.parent / "pulled_manifest.csv"
         manifest_copy.write_bytes(raw)

@@ -1,0 +1,33 @@
+{
+  "inputs": [
+    {
+      "dataset": "cv-traffic-frames",
+      "required_size": 1
+    }
+  ],
+  "tasks": [
+    {
+      "id": "prepare",
+      "plugin": "cv_yolo_prepare",
+      "plugin_version": ">=0.1.0,<3.0.0"
+    },
+    {
+      "id": "train",
+      "plugin": "cv_yolo_train",
+      "plugin_version": ">=0.1.0,<3.0.0",
+      "depends_on": ["prepare"]
+    },
+    {
+      "id": "eval",
+      "plugin": "cv_yolo_eval",
+      "plugin_version": ">=0.1.0,<3.0.0",
+      "depends_on": ["train"]
+    },
+    {
+      "id": "gate",
+      "plugin": "cv_yolo_gate",
+      "plugin_version": ">=0.1.0,<3.0.0",
+      "depends_on": ["eval"]
+    }
+  ]
+}

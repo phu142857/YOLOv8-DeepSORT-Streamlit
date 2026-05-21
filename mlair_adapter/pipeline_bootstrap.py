@@ -7,7 +7,7 @@ import threading
 
 from mlair_adapter.base_client import MLAirClient, items_from_response
 from mlair_adapter.model_client import ModelClient
-from mlair_adapter.pipeline_config import load_cv_yolo_pipeline_config
+from mlair_adapter.pipeline_config import load_pipeline_config
 from shared.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,41 @@ def reload_cv_plugins(client: MLAirClient | None = None) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def _publish_pipeline_version(
+    client: MLAirClient,
+    pfx: str,
+    pipeline_id: str,
+    *,
+    mode: str,
+    train_url: str | None,
+    force_republish: bool,
+) -> dict:
+    latest_cfg = _latest_pipeline_config(client, pfx, pipeline_id)
+    needs_publish = force_republish or _needs_new_pipeline_version(latest=latest_cfg, mode=mode)
+    version_id: str | None = None
+    skipped = False
+    republished = False
+    if needs_publish:
+        config = load_pipeline_config(pipeline_id, mode=mode, cv_train_url=train_url)
+        client.post("/v1/pipelines/validate", json={"config": config})
+        ver = client.post(f"{pfx}/pipelines/{pipeline_id}/versions", json={"config": config})
+        version_id = ver.get("version_id") if isinstance(ver, dict) else None
+        republished = latest_cfg is not None
+        logger.info("MLAir pipeline %s mode=%s version_id=%s", pipeline_id, mode, version_id)
+    else:
+        skipped = True
+        existing = client.get(f"{pfx}/pipelines/{pipeline_id}/versions", params={"limit": 1})
+        items = items_from_response(existing)
+        if items:
+            version_id = str(items[0].get("version_id") or "") or None
+    return {
+        "pipeline_id": pipeline_id,
+        "version_id": version_id,
+        "skipped": skipped,
+        "republished": republished,
+    }
+
+
 def ensure_cv_yolo_pipeline(
     *,
     map_models: bool = True,
@@ -109,6 +144,7 @@ def ensure_cv_yolo_pipeline(
     mode: str | None = None,
     force_republish: bool = False,
     client: MLAirClient | None = None,
+    register_hard_example: bool = True,
 ) -> dict:
     """
     Publish pipeline version so Hub lists ``cv-yolo-vehicle-train``.
@@ -127,32 +163,31 @@ def ensure_cv_yolo_pipeline(
     if mode not in ("plugin", "http"):
         mode = "plugin"
 
-    latest_cfg = _latest_pipeline_config(client, pfx, pipeline_id)
-    needs_publish = force_republish or _needs_new_pipeline_version(latest=latest_cfg, mode=mode)
-
     version_id: str | None = None
     pipeline_skipped = False
     republished = False
+    hard_mine: dict | None = None
     try:
-        if needs_publish:
-            config = load_cv_yolo_pipeline_config(mode=mode, cv_train_url=train_url)
-            client.post("/v1/pipelines/validate", json={"config": config})
-            ver = client.post(f"{pfx}/pipelines/{pipeline_id}/versions", json={"config": config})
-            version_id = ver.get("version_id") if isinstance(ver, dict) else None
-            republished = latest_cfg is not None
-            logger.info(
-                "MLAir pipeline %s: mode=%s version_id=%s republished=%s",
-                pipeline_id,
-                mode,
-                version_id,
-                republished,
+        main = _publish_pipeline_version(
+            client,
+            pfx,
+            pipeline_id,
+            mode=mode,
+            train_url=train_url,
+            force_republish=force_republish,
+        )
+        version_id = main.get("version_id")
+        pipeline_skipped = main.get("skipped", False)
+        republished = main.get("republished", False)
+        if register_hard_example:
+            hard_mine = _publish_pipeline_version(
+                client,
+                pfx,
+                settings.mlair_hard_example_pipeline_id,
+                mode="plugin",
+                train_url=None,
+                force_republish=force_republish,
             )
-        else:
-            pipeline_skipped = True
-            existing = client.get(f"{pfx}/pipelines/{pipeline_id}/versions", params={"limit": 1})
-            items = items_from_response(existing)
-            if items:
-                version_id = str(items[0].get("version_id") or "") or None
     except Exception as exc:
         logger.exception("pipeline register failed")
         return {"ok": False, "reason": str(exc), "pipeline_id": pipeline_id, "mode": mode}
@@ -180,6 +215,7 @@ def ensure_cv_yolo_pipeline(
         "training_policy": policy_result,
         "mapped_models": mapping_out.get("mapped_models") or [],
         "mapping_errors": mapping_out.get("errors") or [],
+        "hard_example_pipeline": hard_mine,
     }
 
 
