@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 
 from pydantic import BaseModel
 
 from mlair_adapter.dataset_client import DatasetClient
 from mlair_adapter.model_client import ModelClient
+from mlair_adapter.model_sync import ModelSyncService
 from mlair_adapter.readiness_client import ReadinessClient, normalize_readiness
 from mlair_adapter.training_client import TrainingClient
 from shared.schemas import MLAirReadinessResponse
@@ -19,7 +20,30 @@ class TriggerTrainingRequest(BaseModel):
     dataset_id: str
     dataset_version_id: str | None = None
 
+
+class PromoteWebhookBody(BaseModel):
+    """MLAir ``MLAIR_MODEL_PROMOTE_WEBHOOK_*`` outbound JSON."""
+
+    tenant_id: str = ""
+    project_id: str = ""
+    model_id: str
+    version: int
+    artifact_uri: str = ""
+    idempotency_key: str | None = None
+
+
 router = APIRouter(prefix="/api/v1/mlair", tags=["mlair"])
+
+
+def _check_promote_webhook_token(authorization: str | None) -> None:
+    expected = settings.mlair_promote_webhook_token.strip()
+    if not expected:
+        return
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    token = authorization[7:].strip()
+    if token != expected:
+        raise HTTPException(status_code=403, detail="invalid promote webhook token")
 
 
 def _require_client() -> DatasetClient:
@@ -134,12 +158,50 @@ def get_training_run(run_id: str) -> dict:
     return client.get_run(run_id)
 
 
+@router.post("/promote-webhook")
+def mlair_promote_webhook(
+    body: PromoteWebhookBody,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """
+    MLAir Hub promote → update ``weights/detection/{model}/base`` for Vehicle Detection.
+    Configure on ml-air-api: ``MLAIR_MODEL_PROMOTE_WEBHOOK_URL=http://cv-api:8000/api/v1/mlair/promote-webhook``.
+    """
+    _check_promote_webhook_token(authorization)
+    if not settings.mlair_sync_on_hub_promote:
+        return {"ok": True, "skipped": True, "reason": "sync_on_hub_promote_disabled"}
+
+    svc = ModelSyncService()
+    if not svc.enabled:
+        raise HTTPException(status_code=503, detail="MLAir model sync not configured")
+    try:
+        return svc.apply_mlair_promotion_to_local(
+            body.model_id,
+            body.version,
+            stage=settings.mlair_promote_stage,
+            artifact_uri=body.artifact_uri or None,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.post("/models/{model_id}/promote")
 def promote_model(model_id: str, version: int, stage: str = "production") -> dict:
     client = ModelClient()
     if not client.enabled:
         raise HTTPException(status_code=503, detail="MLAir not configured")
-    return client.promote(model_id, version, stage=stage)
+    promoted = client.promote(model_id, version, stage=stage)
+    if settings.mlair_sync_on_hub_promote:
+        try:
+            local = ModelSyncService().apply_mlair_promotion_to_local(
+                model_id,
+                version,
+                stage=stage,
+            )
+            promoted = {**promoted, "local_sync": local}
+        except Exception as exc:
+            promoted = {**promoted, "local_sync": {"ok": False, "error": str(exc)}}
+    return promoted
 
 
 @router.get("/training/config")

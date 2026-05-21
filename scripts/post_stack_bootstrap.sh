@@ -43,9 +43,14 @@ echo "$SYNC_JSON" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 print('  pushed:', d.get('pushed'), 'pulled:', d.get('pulled'), 'pruned:', d.get('state_pruned'))
-fails = [r for r in (d.get('push_results') or []) if r.get('ok') is False]
+fails = [r for r in (d.get('push_results') or []) if r.get('ok') is False and not r.get('skipped')]
+skipped = sum(1 for r in (d.get('push_results') or []) if r.get('skipped'))
+if skipped:
+    print('  push skipped (already aligned):', skipped)
 if fails:
     print('  push errors:', fails[0].get('error', fails[0])[:200])
+    sys.exit(1)
+if int(d.get('pushed') or 0) == 0 and int(d.get('pulled') or 0) == 0 and fails:
     sys.exit(1)
 " || {
   echo "Model sync failed — check: docker logs ml-air-api | tail -30" >&2

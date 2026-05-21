@@ -104,6 +104,22 @@ Hoặc `./scripts/docker-up.sh` (tự chạy lại init).
 
 Sau import thành công, trên Hub mở model → tab **Versions** (vd. v1, stage `production`).
 
+## Promote trên Hub → Vehicle Detection dùng đúng bản
+
+Promote version lên **production** trên MLAir Hub sẽ (qua webhook) cập nhật `weights/detection/<model>/base/weights.pt`. UI chọn model dạng `yolov8n/base` tự dùng bản production mới.
+
+Cần trong `docker-compose` (đã mặc định):
+
+- `MLAIR_MODEL_PROMOTE_WEBHOOK_URL=http://cv-api:8000/api/v1/mlair/promote-webhook`
+- `MLAIR_MODEL_PROMOTE_WEBHOOK_BEARER_TOKEN` trùng `CV_MLAIR_PROMOTE_WEBHOOK_TOKEN`
+
+Sau `docker compose up -d api cv-api`, promote thử trên Hub và kiểm tra:
+
+```bash
+sha256sum weights/detection/yolov8n/base/weights.pt
+cat weights/detection/yolov8n/base/mlair-sync.json
+```
+
 ## Lưu ý
 
 - Thư mục `v1`, `v2` (lịch sử) **không** bị xóa; chỉ `base` + `production` được căn theo Hub production.

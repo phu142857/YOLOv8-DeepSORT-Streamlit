@@ -72,6 +72,12 @@ class Settings:
     mlair_train_pipeline_id: str = _env("CV_MLAIR_TRAIN_PIPELINE_ID", "cv-yolo-vehicle-train")
     mlair_bootstrap_pipeline_on_startup: bool = _env_bool("CV_MLAIR_BOOTSTRAP_PIPELINE", True)
     mlair_train_callback_token: str = _env("CV_MLAIR_TRAIN_CALLBACK_TOKEN", "admin-token")
+    # MLAir Hub promote → pull production into weights/detection (webhook + periodic pull).
+    mlair_sync_on_hub_promote: bool = _env_bool("CV_MLAIR_SYNC_ON_HUB_PROMOTE", True)
+    mlair_promote_webhook_token: str = _env(
+        "CV_MLAIR_PROMOTE_WEBHOOK_TOKEN",
+        _env("CV_MLAIR_TRAIN_CALLBACK_TOKEN", "admin-token"),
+    )
     mlair_train_base_model_spec: str = _env("CV_MLAIR_TRAIN_BASE_MODEL", "yolov8n/base")
     mlair_train_epochs: int = int(_env("CV_MLAIR_TRAIN_EPOCHS", "10"))
     mlair_train_batch: int = int(_env("CV_MLAIR_TRAIN_BATCH", "8"))

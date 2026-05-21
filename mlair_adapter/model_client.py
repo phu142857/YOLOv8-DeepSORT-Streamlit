@@ -78,7 +78,12 @@ class ModelClient(MLAirClient):
         return items_from_response(data)
 
     def get_version(self, model_id: str, version: int) -> dict[str, Any]:
-        return self.get(f"{self._prefix()}/models/{model_id}/versions/{version}")
+        """MLAir exposes list versions only (no GET by version number)."""
+        target = int(version)
+        for row in self.list_versions(model_id):
+            if int(row.get("version") or 0) == target:
+                return row
+        return {}
 
     def promote(
         self,

@@ -92,7 +92,25 @@ Gọi tự động: `start_registry_sync_background()` trong `backend/main.py` l
 - MLAir HTTP pipeline → `POST /api/v1/mlair/train/execute`
 - `ModelSyncService.sync_after_training()` → pull production về `base`/`production` + ghi `mlair-sync.json`
 
-### C) Post compose (host)
+### C) Hub promote → Vehicle Detection (hai chiều)
+
+Khi trên **MLAir Hub** promote version lên `production`:
+
+1. MLAir gọi webhook `POST http://cv-api:8000/api/v1/mlair/promote-webhook` (env trên `ml-air-api`).
+2. CV copy artifact production vào `weights/detection/{model}/base/weights.pt` và `production/weights.pt`.
+3. Streamlit chọn `yolov8n (MLAir vN)` → job spec `yolov8n/base` → inference dùng file vừa cập nhật.
+
+Nếu webhook lỗi, **registry resync ~120s** vẫn pull khi `production_version` trên Hub khác bản local.
+
+Env:
+
+```bash
+MLAIR_MODEL_PROMOTE_WEBHOOK_URL=http://cv-api:8000/api/v1/mlair/promote-webhook
+MLAIR_MODEL_PROMOTE_WEBHOOK_BEARER_TOKEN=admin-token   # = CV_MLAIR_PROMOTE_WEBHOOK_TOKEN
+CV_MLAIR_SYNC_ON_HUB_PROMOTE=1
+```
+
+### D) Post compose (host)
 
 `./scripts/post_stack_bootstrap.sh` — chown volume + `sync-full?force=1` + pipeline.
 
@@ -108,7 +126,7 @@ Gọi tự động: `start_registry_sync_background()` trong `backend/main.py` l
 | `_sync_mlair_project_registry_core` | `sync_mlair_registry_core` |
 | `MLAIR_REGISTRY_RESYNC_SECONDS=120` | `CV_MLAIR_REGISTRY_RESYNC_SECONDS` (default 120) |
 | Clinic projects | Một project `default_project`, nhiều model logical (`yolov8n`, …) |
-| Promote webhook hai chiều | Chưa có webhook — có thể bổ sung sau |
+| Promote webhook hai chiều | **MLAir → CV** `POST /api/v1/mlair/promote-webhook` (Hub promote → `weights/.../base`) |
 
 ---
 

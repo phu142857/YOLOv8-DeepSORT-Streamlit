@@ -199,6 +199,109 @@ class ModelSyncService:
 
         return {"production": dest["production"], "base": dest["base"], "sha256": digest, "version": version}
 
+    def _invalidate_registry_cache(self, model_id: str) -> None:
+        cache_dir = settings.mlair_weights_cache_dir / model_id
+        if not cache_dir.is_dir():
+            return
+        for path in cache_dir.glob("*.pt"):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+    def _hub_production_version(self, model_row: dict[str, Any]) -> int | None:
+        raw = model_row.get("production_version")
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def _local_tracks_hub_production(
+        self, state: dict[str, Any], model_name: str, hub_version: int | None
+    ) -> bool:
+        if hub_version is None:
+            return False
+        base = state.get(model_spec(model_name, "base")) or {}
+        return int(base.get("registry_version") or -1) == hub_version
+
+    def apply_mlair_promotion_to_local(
+        self,
+        model_id: str,
+        version: int,
+        *,
+        stage: str | None = None,
+        artifact_uri: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        MLAir production promote → ``weights/detection/{name}/base`` + ``production``.
+        Vehicle Detection jobs using ``{name}/base`` pick up the new weights on next run.
+        """
+        if not self.enabled:
+            return {"ok": False, "reason": "sync_disabled"}
+
+        stage = stage or settings.mlair_sync_stage
+        version = int(version)
+        model_row = self._client.get_model(model_id)
+        model_name = str(model_row.get("name") or model_id)
+
+        self._invalidate_registry_cache(model_id)
+        mirrored = self.mirror_production_to_canonical_local(
+            model_id,
+            model_name=model_name,
+            version=version,
+            stage=stage,
+        )
+        version_row = self._client.get_version(model_id, version)
+        uri = str(artifact_uri or version_row.get("artifact_uri") or "")
+
+        state = self._load_state()
+        self._update_state_aligned(
+            state,
+            model_name=model_name,
+            model_id=model_id,
+            version=version,
+            sha256=str(mirrored["sha256"]),
+            stage=stage,
+            source="hub_promote",
+        )
+        write_version_sync_metadata(
+            mirrored["base"].parent,
+            meta=VersionSyncMetadata(
+                cv_disk_version="base",
+                cv_model=model_name,
+                cv_spec=model_spec(model_name, "base"),
+                sha256=str(mirrored["sha256"]),
+                mlair_model_id=model_id,
+                mlair_version=version,
+                mlair_version_id=str(version_row.get("version_id") or ""),
+                mlair_artifact_uri=uri,
+                mlair_stage=stage,
+                synced_at=time.time(),
+            ),
+        )
+        self._save_state(state)
+        ensure_registry_weights(model_id, stage=stage)
+
+        logger.info(
+            "Hub promote applied locally: %s production v%s → %s",
+            model_name,
+            version,
+            mirrored["base"],
+        )
+        return {
+            "ok": True,
+            "model_id": model_id,
+            "model_name": model_name,
+            "version": version,
+            "stage": stage,
+            "spec": model_spec(model_name, "base"),
+            "local_base": str(mirrored["base"]),
+            "local_production": str(mirrored["production"]),
+            "sha256": str(mirrored["sha256"]),
+        }
+
     def sync_pull_registry_models(self, state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """MLAir → local: every registry model production copied to base + production."""
         state = state if state is not None else self._load_state()
@@ -215,8 +318,27 @@ class ModelSyncService:
             if model_name not in local_names:
                 logger.debug("skip pull for hub-only model %s (no weights/detection folder)", model_name)
                 continue
+
+            hub_prod = self._hub_production_version(row)
+            if self._local_tracks_hub_production(state, model_name, hub_prod):
+                results.append(
+                    {
+                        "model": model_name,
+                        "model_id": model_id,
+                        "ok": True,
+                        "skipped": True,
+                        "reason": "production_already_aligned",
+                        "version": hub_prod,
+                    }
+                )
+                continue
+
             try:
-                mirrored = self.mirror_production_to_canonical_local(model_id, model_name=model_name)
+                mirrored = self.mirror_production_to_canonical_local(
+                    model_id,
+                    model_name=model_name,
+                    version=hub_prod,
+                )
                 self._update_state_aligned(
                     state,
                     model_name=model_name,
@@ -302,8 +424,10 @@ class ModelSyncService:
             out = self._client.import_version(model_id, weights, stage=stage)
 
         version = int(out.get("version") or 0)
-        version_row = self._client.get_version(model_id, version) if version else {}
-        artifact_uri = str(version_row.get("artifact_uri") or "")
+        version_row = out if isinstance(out, dict) else {}
+        if version and not version_row.get("artifact_uri"):
+            version_row = self._client.get_version(model_id, version) or version_row
+        artifact_uri = str(version_row.get("artifact_uri") or out.get("artifact_uri") or "")
         write_version_sync_metadata(
             version_dir_path,
             meta=VersionSyncMetadata(
@@ -429,51 +553,12 @@ class ModelSyncService:
             return {"ok": False, "reason": "no_version_row"}
 
         version = int(row.get("version") or 0)
-        model_row = self._client.get_model(model_id)
-        model_name = str(model_row.get("name") or model_id)
-
-        mirrored = self.mirror_production_to_canonical_local(
-            model_id, model_name=model_name, version=version, stage=stage
-        )
-        state = self._load_state()
-        self._update_state_aligned(
-            state,
-            model_name=model_name,
-            model_id=model_id,
-            version=version,
-            sha256=str(mirrored["sha256"]),
+        return self.apply_mlair_promotion_to_local(
+            model_id,
+            version,
             stage=stage,
-            source="mlair_train",
+            artifact_uri=str(row.get("artifact_uri") or ""),
         )
-        self._save_state(state)
-        ensure_registry_weights(model_id, stage=stage)
-
-        base_dir = mirrored["base"].parent
-        write_version_sync_metadata(
-            base_dir,
-            meta=VersionSyncMetadata(
-                cv_disk_version="base",
-                cv_model=model_name,
-                cv_spec=model_spec(model_name, "base"),
-                sha256=str(mirrored["sha256"]),
-                mlair_model_id=model_id,
-                mlair_version=version,
-                mlair_version_id=str(row.get("version_id") or ""),
-                mlair_artifact_uri=str(row.get("artifact_uri") or ""),
-                mlair_stage=stage,
-                synced_at=time.time(),
-            ),
-        )
-
-        return {
-            "ok": True,
-            "model_id": model_id,
-            "model_name": model_name,
-            "version": version,
-            "aligned": True,
-            "local_base": str(mirrored["base"]),
-            "local_production": str(mirrored["production"]),
-        }
 
 
 def sync_training_checkpoint_to_mlair(
