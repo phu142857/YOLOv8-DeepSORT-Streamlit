@@ -86,6 +86,45 @@ API image: `deploy/Dockerfile.mlair-api-cv-plugins` (cài `integrations/mlair_cv
 
 Pipeline **`cv-yolo-vehicle-train`** (1 task) vẫn dùng được: worker gọi `run_legacy_monolithic_train` khi không có `prepare_ok` trong workspace.
 
+## Train FAILED: `Weights only load failed` / `DetectionModel was not an allowed global`
+
+PyTorch **2.6+** mặc định `torch.load(..., weights_only=True)` — file `.pt` Ultralytics không load được.
+
+- Worker gọi `mlair_adapter.torch_compat.apply_torch_checkpoint_compat()` trước khi import YOLO.
+- Rebuild image worker: `docker compose build cv-lifecycle-workload && docker compose up -d mlair-cv-train-worker`
+- Chạy **run pipeline mới** (task cũ đã `attempt: 3` / FAILED).
+
+## Runner logs (Hub) ↔ task CV
+
+MLAir (API + Hub mới) ghi log qua `POST /v1/tasks/{task_id}/logs` → Redis `mlair:logs:{run_id}` + index task. Tab **Runner logs** filter theo task/plugin.
+
+Worker CV (`mlair_cv_pipeline_worker`) tee stdout/stderr + logging Ultralytics vào API đó khi task `RUNNING`.
+
+Cần image **ml-air-api** và **ml-air-frontend** có bản có feature log (build/push từ repo ml-air, hoặc tag mới trên GHCR). Sau đó:
+
+```bash
+docker compose build cv-lifecycle-workload mlair-cv-train-worker  # image worker CV
+docker compose up -d api frontend mlair-cv-train-worker
+```
+
+Vẫn xem raw: `docker logs -f mlair-cv-train-worker`.
+
+## Train RUNNING mãi / nhảy `train → queued → train`
+
+YOLO train trên CPU có thể **30–60+ phút**. MLAir lease mặc định **30s** — worker **phải heartbeat** (đã thêm trong `mlair_cv_pipeline_worker.py`).
+
+- `ML_AIR_TASK_LEASE_SECONDS=300` trên **api**
+- `MLAIR_HEARTBEAT_INTERVAL_SEC=15` trên worker
+
+Nếu run đang kẹt: **Cancel run** trên Hub → rebuild worker → train lại. Kiểm tra log:
+
+```bash
+docker logs -f mlair-cv-train-worker
+# phải thấy heartbeat + Ultralytics epoch lines
+```
+
+Giảm thời gian test: `CV_MLAIR_TRAIN_EPOCHS=3` trong `.env`.
+
 ## Lỗi thường gặp: `dataset_version_id is required` trên task prepare
 
 Nguyên nhân: worker cũ chỉ đọc `task.context` top-level; MLAir lease trả **`payload.context`** và **`payload.override_config`**.

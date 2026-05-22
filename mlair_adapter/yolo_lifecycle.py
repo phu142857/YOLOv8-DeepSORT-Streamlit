@@ -7,13 +7,22 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from mlair_adapter.torch_compat import apply_torch_checkpoint_compat
+
+apply_torch_checkpoint_compat()
+
 from ultralytics import YOLO
 
 from mlair_adapter.dataset_client import DatasetClient
 from mlair_adapter.model_client import ModelClient
 from mlair_adapter.model_sync import ModelSyncService
 from mlair_adapter.run_workspace import load_state, require_keys, save_state, workspace_dir
-from mlair_adapter.yolo_train_pipeline import _build_yolo_dataset, _resolve_base_weights
+from mlair_adapter.yolo_train_pipeline import (
+    _build_yolo_dataset,
+    _metrics_from_train_results,
+    _resolve_base_weights,
+    _resolve_train_checkpoint,
+)
 from shared.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -113,22 +122,13 @@ def run_train_step(context: dict[str, Any]) -> dict[str, Any]:
         verbose=True,
     )
 
-    best_pt = Path(results.save_dir) / "weights" / "best.pt"
-    if not best_pt.is_file():
-        best_pt = Path(results.save_dir) / "weights" / "last.pt"
-    if not best_pt.is_file():
-        raise FileNotFoundError(f"no checkpoint under {results.save_dir}/weights")
+    best_pt, save_dir = _resolve_train_checkpoint(model, results, work_dir)
 
     import_stage = settings.mlair_lifecycle_import_stage
     imported = ModelClient().import_version(model_id, best_pt, stage=import_stage)
     version_num = int(imported.get("version") or 0)
-    train_metrics: dict[str, float] = {}
-    if hasattr(results, "results_dict"):
-        train_metrics = {
-            k: float(v)
-            for k, v in (results.results_dict or {}).items()
-            if isinstance(v, (int, float))
-        }
+    train_metrics = _metrics_from_train_results(results, model)
+    logger.info("train checkpoint=%s save_dir=%s", best_pt, save_dir)
 
     save_state(
         run_id,

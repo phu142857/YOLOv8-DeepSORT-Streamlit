@@ -299,6 +299,36 @@ class DatasetClient(MLAirClient):
         return self.get_bytes(f"{self._prefix()}/dataset-versions/{version_id}/download")
 
     @staticmethod
+    def parse_version_manifest(text: str) -> list[dict[str, Any]]:
+        """
+        MLAir ``.../dataset-versions/{id}/download`` returns NDJSON (one JSON row per line).
+        Legacy uploads may be CSV with a header row.
+        """
+        text = (text or "").strip()
+        if not text:
+            return []
+
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if not lines:
+            return []
+
+        if lines[0].startswith("{"):
+            rows: list[dict[str, Any]] = []
+            for ln in lines:
+                try:
+                    obj = json.loads(ln)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict):
+                    rows.append(obj)
+            return rows
+
+        reader = csv.DictReader(io.StringIO(text))
+        if not reader.fieldnames:
+            return []
+        return [dict(r) for r in reader]
+
+    @staticmethod
     def _normalize_image_fetch_uri(uri: str) -> str:
         """Rewrite host-only URLs saved as localhost so Docker workers reach cv-api."""
         base = settings.api_base_url.rstrip("/")
@@ -352,20 +382,25 @@ class DatasetClient(MLAirClient):
                 return False
         parsed = urlparse(uri)
         if parsed.scheme == "file":
-            src = Path(parsed.path)
-            if src.is_file():
-                dest.write_bytes(src.read_bytes())
-                return True
-            # file:///mlair/artifacts/datasets/... when volume mounted at /mlair/artifacts
+            candidates: list[Path] = []
+            if parsed.path:
+                candidates.append(Path(parsed.path))
+            # file:///mlair/artifacts/datasets/... → mount at /mlair/artifacts/datasets/...
             mount = Path(settings.mlair_model_artifact_mount)
-            if str(parsed.path).startswith("/mlair/"):
+            if parsed.path.startswith("/mlair/"):
+                candidates.append(Path(parsed.path))
                 try:
-                    alt = mount.parent / Path(parsed.path).relative_to(MLAIR_ARTIFACT_ROOT)
-                    if alt.is_file():
-                        dest.write_bytes(alt.read_bytes())
-                        return True
+                    candidates.append(mount / "datasets" / Path(parsed.path).relative_to("/mlair/artifacts/datasets"))
                 except ValueError:
-                    pass
+                    try:
+                        rel = Path(parsed.path).relative_to(MLAIR_ARTIFACT_ROOT)
+                        candidates.append(mount.parent / rel)
+                    except ValueError:
+                        pass
+            for src in candidates:
+                if src.is_file():
+                    dest.write_bytes(src.read_bytes())
+                    return True
         src = Path(uri)
         if src.is_file():
             dest.write_bytes(src.read_bytes())
@@ -388,17 +423,16 @@ class DatasetClient(MLAirClient):
 
         raw = self.download_version_csv(version_id)
         text = raw.decode("utf-8")
-        reader = csv.DictReader(io.StringIO(text))
-        if not reader.fieldnames:
-            raise ValueError("empty dataset version CSV")
+        manifest_rows = self.parse_version_manifest(text)
+        if not manifest_rows:
+            raise ValueError(f"empty dataset version manifest for {version_id}")
 
-        uri_col = "image_uri" if "image_uri" in reader.fieldnames else reader.fieldnames[0]
         downloaded = 0
 
-        for row in reader:
+        for row in manifest_rows:
             if max_frames > 0 and downloaded >= max_frames:
                 break
-            uri = (row.get(uri_col) or "").strip()
+            uri = (row.get("image_uri") or row.get("uri") or "").strip()
             if not uri:
                 continue
 

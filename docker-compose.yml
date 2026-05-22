@@ -96,6 +96,7 @@ services:
       ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK: ${ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK:-0}
       ML_AIR_STRICT_DATASET_VERSION_REQUIRED: ${ML_AIR_STRICT_DATASET_VERSION_REQUIRED:-1}
       ML_AIR_TASK_EXECUTION_MODE: ${ML_AIR_TASK_EXECUTION_MODE:-external}
+      ML_AIR_TASK_LEASE_SECONDS: ${ML_AIR_TASK_LEASE_SECONDS:-300}
     ports:
       - "${ML_AIR_API_PORT:-8080}:8080"
     volumes:
@@ -186,6 +187,9 @@ services:
 
   # Leases cv_yolo_train plugin tasks (Hub Train requires tasks[].plugin in pipeline config).
   mlair-cv-train-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
     container_name: mlair-cv-train-worker
     command: python scripts/mlair_cv_pipeline_worker.py
@@ -201,6 +205,8 @@ services:
       CV_MLAIR_HARD_EXAMPLE_DATASET: ${CV_MLAIR_HARD_EXAMPLE_DATASET:-cv-traffic-hard-examples}
       CV_MLAIR_HARD_EXAMPLE_MAX_CONF: ${CV_MLAIR_HARD_EXAMPLE_MAX_CONF:-0.35}
       CV_MLAIR_PERSIST_INGEST_FRAMES: ${CV_MLAIR_PERSIST_INGEST_FRAMES:-1}
+      MLAIR_HEARTBEAT_INTERVAL_SEC: ${MLAIR_HEARTBEAT_INTERVAL_SEC:-15}
+      CV_MLAIR_TRAIN_EPOCHS: ${CV_MLAIR_TRAIN_EPOCHS:-10}
       CV_ARTIFACT_ROOT: /app/artifacts
       CV_API_BASE_URL: http://cv-api:8000
       CV_MLAIR_API_URL: http://api:8080
@@ -211,6 +217,8 @@ services:
     volumes:
       - cv_workload_artifacts:/app/artifacts
       - ./weights:/app/weights
+      - ./mlair_adapter:/app/mlair_adapter:ro
+      - ./scripts:/app/scripts:ro
       - ml_air_model_artifacts:/mlair/artifacts/models:ro
       - ml_air_dataset_artifacts:/mlair/artifacts/datasets
     depends_on:

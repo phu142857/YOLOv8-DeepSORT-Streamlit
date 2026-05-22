@@ -361,7 +361,9 @@ def strip_optimizer(f: Union[str, Path] = 'best.pt', s: str = '') -> None:
     except ImportError:
         import pickle
 
-    x = torch.load(f, map_location=torch.device('cpu'))
+    from ultralytics.nn.tasks import _torch_load_checkpoint
+
+    x = _torch_load_checkpoint(f)
     args = {**DEFAULT_CFG_DICT, **x['train_args']}  # combine model args with default args, preferring model args
     if x.get('ema'):
         x['model'] = x['ema']  # replace model with ema

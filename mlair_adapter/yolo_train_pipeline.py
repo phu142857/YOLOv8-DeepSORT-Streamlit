@@ -11,6 +11,11 @@ from typing import Any
 
 import cv2
 import yaml
+
+from mlair_adapter.torch_compat import apply_torch_checkpoint_compat
+
+apply_torch_checkpoint_compat()
+
 from ultralytics import YOLO
 
 from mlair_adapter.dataset_client import DatasetClient
@@ -21,16 +26,136 @@ from shared.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# COCO vehicle-ish classes commonly detected in traffic workload (YOLO pretrained ids).
-_CLASS_NAME_TO_ID = {
-    "person": 0,
-    "bicycle": 1,
-    "car": 2,
-    "motorcycle": 3,
-    "bus": 5,
-    "train": 6,
-    "truck": 7,
+
+def _resolve_train_checkpoint(
+    model: Any,
+    results: Any,
+    work_dir: Path,
+    *,
+    run_name: str = "train",
+) -> tuple[Path, Path]:
+    """
+    Locate best/last .pt after model.train().
+
+    Vendored ultralytics returns None from train(); pip 8.x may return a Results object.
+    """
+    save_dir: Path | None = None
+    if results is not None:
+        sd = getattr(results, "save_dir", None)
+        if sd:
+            save_dir = Path(sd)
+
+    trainer = getattr(model, "trainer", None)
+    if save_dir is None and trainer is not None:
+        sd = getattr(trainer, "save_dir", None)
+        if sd:
+            save_dir = Path(sd)
+    if save_dir is None:
+        save_dir = work_dir / "runs" / run_name
+
+    candidates: list[Path] = []
+    if trainer is not None:
+        for attr in ("best", "last"):
+            p = getattr(trainer, attr, None)
+            if p:
+                candidates.append(Path(p))
+    candidates.extend([save_dir / "weights" / "best.pt", save_dir / "weights" / "last.pt"])
+
+    best_pt: Path | None = None
+    for path in candidates:
+        if path.is_file():
+            best_pt = path
+            break
+
+    if best_pt is None:
+        found = _find_checkpoint_under_runs(work_dir, preferred_name=run_name)
+        if found:
+            best_pt, save_dir = found
+
+    if best_pt is None:
+        raise FileNotFoundError(f"no checkpoint under {save_dir}/weights (train may have aborted)")
+    return best_pt, save_dir
+
+
+def _find_checkpoint_under_runs(work_dir: Path, *, preferred_name: str = "train") -> tuple[Path, Path] | None:
+    """Fallback when model.trainer is cleared but weights were written to disk."""
+    runs_root = work_dir / "runs"
+    if not runs_root.is_dir():
+        return None
+
+    def _pick(save_dir: Path) -> tuple[Path, Path] | None:
+        for name in ("best.pt", "last.pt"):
+            pt = save_dir / "weights" / name
+            if pt.is_file():
+                return pt, save_dir
+        return None
+
+    preferred = runs_root / preferred_name
+    hit = _pick(preferred)
+    if hit:
+        return hit
+
+    subdirs = sorted(
+        (p for p in runs_root.iterdir() if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for sd in subdirs:
+        hit = _pick(sd)
+        if hit:
+            return hit
+    return None
+
+
+def _metrics_from_train_results(results: Any, model: Any) -> dict[str, float]:
+    out: dict[str, float] = {}
+    if results is not None and hasattr(results, "results_dict"):
+        raw = results.results_dict or {}
+        out = {k: float(v) for k, v in raw.items() if isinstance(v, (int, float))}
+    if out:
+        return out
+    trainer = getattr(model, "trainer", None)
+    metrics = getattr(trainer, "metrics", None) if trainer else None
+    if isinstance(metrics, dict):
+        return {k: float(v) for k, v in metrics.items() if isinstance(v, (int, float))}
+    return out
+
+
+# Traffic workload class names (contiguous 0..nc-1 in data.yaml — not raw COCO ids).
+_TRAFFIC_CLASS_NAMES: tuple[str, ...] = (
+    "bicycle",
+    "bus",
+    "car",
+    "motorcycle",
+    "person",
+    "train",
+    "truck",
+)
+_NAME_TO_CONTIGUOUS_ID: dict[str, int] = {n: i for i, n in enumerate(_TRAFFIC_CLASS_NAMES)}
+# COCO pretrained ids from detector — used only to resolve missing class_name.
+_COCO_ID_TO_NAME: dict[int, str] = {
+    0: "person",
+    1: "bicycle",
+    2: "car",
+    3: "motorcycle",
+    5: "bus",
+    6: "train",
+    7: "truck",
 }
+
+
+def _detection_contiguous_class_id(det: dict[str, Any]) -> int | None:
+    name = str(det.get("class_name") or "").lower().strip()
+    if name in _NAME_TO_CONTIGUOUS_ID:
+        return _NAME_TO_CONTIGUOUS_ID[name]
+    if det.get("class_id") is not None:
+        try:
+            coco_name = _COCO_ID_TO_NAME.get(int(det["class_id"]))
+        except (TypeError, ValueError):
+            coco_name = None
+        if coco_name:
+            return _NAME_TO_CONTIGUOUS_ID.get(coco_name)
+    return None
 
 
 def _resolve_base_weights(context: dict[str, Any]) -> Path:
@@ -95,10 +220,9 @@ def _xyxy_to_yolo_line(xyxy: list[float], img_w: int, img_h: int, class_id: int)
 def _write_label_file(label_path: Path, detections: list[dict[str, Any]], img_w: int, img_h: int) -> bool:
     lines: list[str] = []
     for det in detections:
-        name = str(det.get("class_name") or "").lower()
-        cls_id = _CLASS_NAME_TO_ID.get(name)
+        cls_id = _detection_contiguous_class_id(det)
         if cls_id is None:
-            cls_id = int(det.get("class_id") or 0)
+            continue
         xyxy = det.get("xyxy")
         if not xyxy or len(xyxy) != 4:
             continue
@@ -128,24 +252,22 @@ def _build_yolo_dataset(
     job_det_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
     if manifest_csv.is_file():
-        import csv
-
-        with manifest_csv.open(encoding="utf-8", newline="") as f:
-            for row in csv.DictReader(f):
-                frame_index = str(row.get("frame_index") or "").strip()
-                job_id = str(row.get("job_id") or "").strip()
-                img = images_all / f"{frame_index}.jpg"
-                if not img.is_file():
-                    img = images_all / f"{frame_index.zfill(6)}.jpg"
-                if not img.is_file():
-                    continue
-                samples.append((img, job_id if job_id else None))
+        manifest_text = manifest_csv.read_text(encoding="utf-8")
+        for row in DatasetClient.parse_version_manifest(manifest_text):
+            frame_index = str(row.get("frame_index") or "").strip()
+            job_id = str(row.get("job_id") or "").strip()
+            img = images_all / f"{frame_index}.jpg"
+            if not img.is_file():
+                img = images_all / f"{frame_index.zfill(6)}.jpg"
+            if not img.is_file():
+                continue
+            samples.append((img, job_id if job_id else None))
 
     if not samples:
         for img in sorted(images_all.glob("*.jpg")):
             samples.append((img, None))
 
-    names = sorted(set(_CLASS_NAME_TO_ID.keys()))
+    names = list(_TRAFFIC_CLASS_NAMES)
     labeled_samples: list[tuple[Path, str | None, list[dict[str, Any]] | None]] = []
     for img_path, job_id in samples:
         stem = img_path.stem
@@ -235,11 +357,7 @@ def run_yolo_training(context: dict[str, Any], *, work_root: Path | None = None)
         verbose=True,
     )
 
-    best_pt = Path(results.save_dir) / "weights" / "best.pt"
-    if not best_pt.is_file():
-        best_pt = Path(results.save_dir) / "weights" / "last.pt"
-    if not best_pt.is_file():
-        raise FileNotFoundError(f"no checkpoint under {results.save_dir}/weights")
+    best_pt, save_dir = _resolve_train_checkpoint(model, results, work_dir)
 
     model_client = ModelClient()
     imported = model_client.import_version(
@@ -248,9 +366,7 @@ def run_yolo_training(context: dict[str, Any], *, work_root: Path | None = None)
         stage=settings.mlair_train_import_stage,
     )
 
-    metrics = {}
-    if hasattr(results, "results_dict"):
-        metrics = {k: float(v) for k, v in (results.results_dict or {}).items() if isinstance(v, (int, float))}
+    metrics = _metrics_from_train_results(results, model)
 
     return {
         "ok": True,
