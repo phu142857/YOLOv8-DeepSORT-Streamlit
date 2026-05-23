@@ -3,18 +3,59 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from typing import TextIO
 
 from mlair_adapter.task_log_client import TaskLogSink
 
+# Ultralytics/tqdm write progress + warnings to stderr — not task failures.
+_STDERR_ERROR_HINTS = re.compile(
+    r"(traceback|exception:|^error[:\s]|failed|fatal|cannot open|file not found)",
+    re.IGNORECASE,
+)
+_STDERR_WARN_HINTS = re.compile(
+    r"(warning|futurewarning|userwarning|deprecated)",
+    re.IGNORECASE,
+)
+_STDERR_PROGRESS_HINTS = re.compile(
+    r"(%[\s#|]|it/s\]|\d+/\d+\s+\[|█|▌|▎|▏|Scanning |Downloading )",
+)
+
+
+def _classify_stderr_line(line: str) -> str:
+    text = line.strip()
+    if not text:
+        return "INFO"
+    if _STDERR_ERROR_HINTS.search(text):
+        return "ERROR"
+    if _STDERR_WARN_HINTS.search(text):
+        return "WARN"
+    if _STDERR_PROGRESS_HINTS.search(text):
+        return "INFO"
+    return "INFO"
+
 
 class _StreamTee(TextIO):
-    def __init__(self, original: TextIO, sink: TaskLogSink, *, level: str) -> None:
+    def __init__(
+        self,
+        original: TextIO,
+        sink: TaskLogSink,
+        *,
+        level: str,
+        classify_stderr: bool = False,
+    ) -> None:
         self._original = original
         self._sink = sink
         self._level = level
+        self._classify_stderr = classify_stderr
         self._pending = ""
+
+    def _emit(self, line: str) -> None:
+        if not line.strip():
+            return
+        lvl = _classify_stderr_line(line) if self._classify_stderr else self._level
+        self._sink.line(line.rstrip(), level=lvl)
 
     def write(self, data: str) -> int:
         if not data:
@@ -23,14 +64,13 @@ class _StreamTee(TextIO):
         self._pending += data
         while "\n" in self._pending:
             line, self._pending = self._pending.split("\n", 1)
-            if line.strip():
-                self._sink.line(line.rstrip(), level=self._level)
+            self._emit(line)
         return len(data)
 
     def flush(self) -> None:
         self._original.flush()
         if self._pending.strip():
-            self._sink.line(self._pending.rstrip(), level=self._level)
+            self._emit(self._pending.rstrip())
             self._pending = ""
 
     def isatty(self) -> bool:
@@ -63,7 +103,10 @@ class capture_task_logs:
         self._orig_out = sys.stdout
         self._orig_err = sys.stderr
         sys.stdout = _StreamTee(self._orig_out, self._sink, level="INFO")  # type: ignore[assignment]
-        sys.stderr = _StreamTee(self._orig_err, self._sink, level="ERROR")  # type: ignore[assignment]
+        # stderr: Ultralytics progress bars + warnings — classify; only real failures → ERROR
+        sys.stderr = _StreamTee(  # type: ignore[assignment]
+            self._orig_err, self._sink, level="INFO", classify_stderr=True
+        )
         self._handler = _LoggingHandler(self._sink)
         self._handler.setFormatter(logging.Formatter("%(message)s"))
         logging.getLogger().addHandler(self._handler)
