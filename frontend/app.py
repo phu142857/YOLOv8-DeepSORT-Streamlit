@@ -61,8 +61,19 @@ if not model_options:
     st.error("No detection models found under weights/detection/{model}/{version}/")
     st.stop()
 
-model_label = st.sidebar.selectbox("Select Model", model_options)
+_default_model_idx = 0
+for _i, _label in enumerate(model_options):
+    _spec = model_value_map.get(_label, _label)
+    if _spec.startswith("yolov8s/") or _spec == config.DEFAULT_MODEL_SPEC:
+        _default_model_idx = _i
+        break
+model_label = st.sidebar.selectbox("Select Model", model_options, index=_default_model_idx)
 model_type = model_value_map.get(model_label, model_label)
+if model_type.startswith("yolov8n/") and "MLAir" in model_label:
+    st.sidebar.warning(
+        "**yolov8n** may use MLAir-trained weights on `base/` (often 0 detections). "
+        "Prefer **yolov8s** for Execution, or run `./scripts/restore_detection_pretrained.sh yolov8n`."
+    )
 confidence = float(st.sidebar.slider("Confidence", 30, 100, 50)) / 100
 
 st.sidebar.header("Source")

@@ -97,12 +97,14 @@ class Settings:
     mlair_train_imgsz: int = int(_env("CV_MLAIR_TRAIN_IMGSZ", "640"))
     mlair_train_max_frames: int = int(_env("CV_MLAIR_TRAIN_MAX_FRAMES", "500"))
     mlair_train_import_stage: str = _env("CV_MLAIR_TRAIN_IMPORT_STAGE", "production")
+    mlair_prepare_fallback_pseudo: bool = _env_bool("CV_MLAIR_PREPARE_FALLBACK_PSEUDO", True)
+    mlair_prepare_pseudo_confidence: float = float(_env("CV_MLAIR_PREPARE_PSEUDO_CONF", "0.25"))
 
     video_extensions: frozenset[str] = frozenset(
         {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
     )
     image_extensions: frozenset[str] = frozenset(
-        {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+        {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".avif", ".heic", ".heif"}
     )
 
 

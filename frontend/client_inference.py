@@ -51,6 +51,22 @@ def show_job_results(api: CVApiClient, job: JobResponse) -> None:
     st.markdown("**Vehicle Out**")
     st.write(job.counters_out or {})
 
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as det_tmp:
+            api.download_artifact(job.id, "detections", Path(det_tmp.name))
+            import json
+
+            det_data = json.loads(Path(det_tmp.name).read_text(encoding="utf-8"))
+        dets = det_data.get("detections") if isinstance(det_data, dict) else None
+        if dets is not None and len(dets) == 0:
+            st.warning(
+                "No objects detected — `detections.json` is empty. "
+                "Try model **yolov8s/base**, lower confidence, or restore pretrained weights. "
+                "Hub Train will fail prepare without labels."
+            )
+    except Exception:
+        pass
+
     processed = job.artifact_manifest.get("processed_video", "")
     suffix = Path(processed).suffix.lower() if processed else ".mp4"
 
@@ -185,7 +201,7 @@ def show_dataset_feedback(api: CVApiClient, job: JobResponse) -> None:
 def render_image_client(api: CVApiClient, model_name: str, confidence: float) -> None:
     source_img = st.sidebar.file_uploader(
         label="Choose an image...",
-        type=("jpg", "jpeg", "png", "bmp", "webp"),
+        type=("jpg", "jpeg", "png", "bmp", "webp", "avif", "heic"),
     )
     col1, col2 = st.columns(2)
 

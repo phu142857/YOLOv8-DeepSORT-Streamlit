@@ -18,8 +18,10 @@ apply_torch_checkpoint_compat()
 
 from ultralytics import YOLO
 
+from inference.engine import load_model, predict_frame
 from mlair_adapter.dataset_client import DatasetClient
 from shared.artifacts import ArtifactStore
+from shared.image_io import load_image_bgr
 from mlair_adapter.model_client import ModelClient
 from shared.model_resolve import ensure_registry_weights, is_registry_model, registry_model_id, resolve_model_path
 from shared.settings import settings
@@ -176,6 +178,33 @@ def _resolve_base_weights(context: dict[str, Any]) -> Path:
     return resolve_model_path(spec)
 
 
+def _pseudo_label_samples(
+    samples: list[tuple[Path, str | None]],
+    *,
+    context: dict[str, Any] | None = None,
+) -> list[tuple[Path, str | None, list[dict[str, Any]]]]:
+    ctx = context or {}
+    base_weights = _resolve_base_weights(ctx)
+    logger.warning(
+        "prepare: no detections in job artifacts — pseudo-labeling %d frame(s) with %s",
+        len(samples),
+        base_weights,
+    )
+    model = load_model(str(base_weights))
+    conf = settings.mlair_prepare_pseudo_confidence
+    labeled: list[tuple[Path, str | None, list[dict[str, Any]]]] = []
+    for img_path, job_id in samples:
+        try:
+            frame = load_image_bgr(img_path)
+        except (FileNotFoundError, RuntimeError):
+            logger.warning("prepare: cannot read image %s", img_path)
+            continue
+        _, detections, _, _ = predict_frame(model, frame, conf)
+        if detections:
+            labeled.append((img_path, job_id, detections))
+    return labeled
+
+
 def _load_job_detections(job_id: str, store: ArtifactStore | None = None) -> dict[str, list[dict[str, Any]]]:
     """frame_index (stem) -> detections list from job artifacts."""
     store = store or ArtifactStore()
@@ -239,6 +268,7 @@ def _build_yolo_dataset(
     work_dir: Path,
     *,
     val_ratio: float = 0.2,
+    context: dict[str, Any] | None = None,
 ) -> tuple[Path, int, int]:
     """Download frames + pseudo-labels from job detections; return (data_yaml, n_train, n_val)."""
     client = DatasetClient()
@@ -280,9 +310,13 @@ def _build_yolo_dataset(
             labeled_samples.append((img_path, job_id, dets))
 
     if not labeled_samples:
-        raise ValueError(
-            "no labeled frames for training — run CV Execution on videos first so detections.jsonl exists per job_id"
-        )
+        if settings.mlair_prepare_fallback_pseudo and samples:
+            labeled_samples = _pseudo_label_samples(samples, context=context)
+        if not labeled_samples:
+            raise ValueError(
+                "no labeled frames for training — run CV Execution with a working detector "
+                "(use yolov8s/base or restore pretrained; empty detections.jsonl gives no labels)"
+            )
 
     random.shuffle(labeled_samples)
     split = max(1, int(len(labeled_samples) * (1.0 - val_ratio)))
@@ -298,7 +332,7 @@ def _build_yolo_dataset(
             stem = img_path.stem
             dest_img = img_dir / f"{stem}.jpg"
             shutil.copy2(img_path, dest_img)
-            h, w = cv2.imread(str(dest_img)).shape[:2]
+            h, w = load_image_bgr(dest_img).shape[:2]
             _write_label_file(lbl_dir / f"{stem}.txt", dets or [], w, h)
 
     data_yaml = work_dir / "data.yaml"
@@ -334,7 +368,7 @@ def run_yolo_training(context: dict[str, Any], *, work_root: Path | None = None)
     work_dir.mkdir(parents=True, exist_ok=True)
 
     base_weights = _resolve_base_weights(context)
-    data_yaml, n_train, n_val = _build_yolo_dataset(version_id, work_dir / "dataset")
+    data_yaml, n_train, n_val = _build_yolo_dataset(version_id, work_dir / "dataset", context=context)
 
     logger.info(
         "Starting YOLO train run_id=%s version=%s base=%s train=%s val=%s",

@@ -13,6 +13,7 @@ import config
 from inference.engine import load_model, predict_frame, resolve_model_path
 from inference.video_export import transcode_mp4_for_browser
 from shared.artifacts import ArtifactStore
+from shared.image_io import load_image_bgr
 from shared.schemas import ArtifactManifest
 from shared.settings import settings
 
@@ -177,9 +178,7 @@ def process_frames_dir_job(
     if not frame_paths:
         raise RuntimeError(f"No frames in {frames_dir}")
 
-    first = cv2.imread(str(frame_paths[0]))
-    if first is None:
-        raise RuntimeError("Cannot read first frame")
+    first = load_image_bgr(frame_paths[0])
     height, width = first.shape[:2]
     fps = 25.0
     out_path = layout["output"] / "processed.mp4"
@@ -195,8 +194,9 @@ def process_frames_dir_job(
         for frame_idx, frame_path in enumerate(frame_paths):
             if should_cancel and should_cancel():
                 raise InterruptedError("job cancelled")
-            frame = cv2.imread(str(frame_path))
-            if frame is None:
+            try:
+                frame = load_image_bgr(frame_path)
+            except (FileNotFoundError, RuntimeError):
                 continue
             plotted, detections, counters_in, counters_out = predict_frame(model, frame, confidence)
             last_plotted = plotted
@@ -259,9 +259,7 @@ def process_image_job(
         raise FileNotFoundError(f"Model not found: {model_path}")
     model = load_model(str(model_path))
 
-    frame = cv2.imread(str(image_path))
-    if frame is None:
-        raise RuntimeError(f"Cannot read image: {image_path}")
+    frame = load_image_bgr(image_path)
 
     plotted, detections, counters_in, counters_out = predict_frame(model, frame, confidence)
     out_path = layout["output"] / "processed.jpg"

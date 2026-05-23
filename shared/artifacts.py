@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from shared.image_io import normalize_image_file
 from shared.schemas import ArtifactEntry, ArtifactManifest
 from shared.settings import settings
 
@@ -61,6 +62,12 @@ class ArtifactStore:
         layout = self.job_layout(job_id)
         dest = layout["source"] / upload_path.name
         shutil.copy2(upload_path, dest)
+        suffix = dest.suffix.lower()
+        if suffix in settings.image_extensions:
+            try:
+                dest = normalize_image_file(dest)
+            except (OSError, RuntimeError) as exc:
+                logger.warning("image normalize failed for %s: %s", dest, exc)
         return dest
 
     def write_json(self, path: Path, payload: Any) -> Path:

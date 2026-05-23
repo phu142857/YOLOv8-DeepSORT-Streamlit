@@ -22,11 +22,14 @@ from shared.model_resolve import ensure_registry_weights
 from shared.settings import settings
 from shared.weights_catalog import (
     CANONICAL_LOCAL_VERSIONS,
+    PRETRAINED_VERSION,
     LocalModelEntry,
     ensure_version_layout,
+    find_weights_in_dir,
     list_detection_model_names,
     model_spec,
     pick_canonical_local_entry,
+    version_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -190,6 +193,14 @@ class ModelSyncService:
             self._client.download_artifact(artifact_uri, cache_path)
 
         digest = _sha256_file(cache_path)
+        root = Path(settings.detection_model_dir)
+        base_w = find_weights_in_dir(version_dir(root, model_name, "base"))
+        pre_dir = version_dir(root, model_name, PRETRAINED_VERSION)
+        if base_w is not None and find_weights_in_dir(pre_dir) is None:
+            pre_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(base_w, pre_dir / "weights.pt")
+            logger.info("preserved COCO pretrained for %s → %s", model_name, pre_dir / "weights.pt")
+
         dest: dict[str, Path] = {}
         for ver in CANONICAL_LOCAL_VERSIONS:
             folder = ensure_version_layout(settings.detection_model_dir, model_name, ver)
@@ -320,6 +331,17 @@ class ModelSyncService:
                 continue
 
             hub_prod = self._hub_production_version(row)
+            if hub_prod is None:
+                results.append(
+                    {
+                        "model": model_name,
+                        "model_id": model_id,
+                        "ok": True,
+                        "skipped": True,
+                        "reason": "no_hub_production_version",
+                    }
+                )
+                continue
             if self._local_tracks_hub_production(state, model_name, hub_prod):
                 results.append(
                     {
@@ -548,16 +570,19 @@ class ModelSyncService:
         return self.sync_full(root=root)
 
     def sync_after_training(self, model_id: str, *, run_id: str | None = None) -> dict[str, Any]:
-        """After train: align local base/production with new production on Hub."""
+        """After train: mirror local base only when Hub has an explicit production version."""
         if not self.enabled:
             return {"ok": False, "reason": "sync_disabled"}
 
         stage = settings.mlair_sync_stage
-        row = self._client.find_latest_version(model_id, run_id=run_id) if run_id else None
-        if not row:
-            row = self._client.resolve_version_row(model_id, stage=stage)
+        row = self._client.resolve_version_row(model_id, stage=stage, fallback_latest=False)
         if not row or not row.get("artifact_uri"):
-            return {"ok": False, "reason": "no_version_row"}
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "no_production_on_hub",
+                "hint": "lifecycle train imports staging; promote on Hub to update detection weights",
+            }
 
         version = int(row.get("version") or 0)
         return self.apply_mlair_promotion_to_local(

@@ -10,7 +10,7 @@ import numpy as np
 from ultralytics import YOLO
 
 import config
-from shared.model_resolve import resolve_model_path as _resolve_model_path
+from shared.model_resolve import resolve_inference_model_path as _resolve_model_path
 
 
 @lru_cache(maxsize=4)

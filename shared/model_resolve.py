@@ -8,7 +8,13 @@ from pathlib import Path
 import config
 from mlair_adapter.model_client import ModelClient
 from shared.settings import settings
-from shared.weights_catalog import resolve_local_weights
+from shared.weights_catalog import (
+    PRETRAINED_VERSION,
+    find_weights_in_dir,
+    parse_model_spec,
+    resolve_local_weights,
+    version_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +53,33 @@ def ensure_registry_weights(model_id: str, *, stage: str = "production") -> Path
     client.download_artifact(str(row["artifact_uri"]), dest)
     logger.info("Cached registry weights model=%s v%s -> %s", model_id, version, dest)
     return dest
+
+
+def resolve_inference_model_path(model_name: str) -> Path:
+    """
+    Weights for upload/Execution (Vehicle Detection).
+
+    ``{model}/base`` may be an MLAir fine-tune with poor/zero detections.
+    Prefer ``{model}/pretrained/weights.pt`` (COCO), seeded before Hub sync overwrites base.
+    """
+    if is_registry_model(model_name):
+        return ensure_registry_weights(registry_model_id(model_name))
+
+    parsed = parse_model_spec(model_name)
+    if parsed:
+        model, version = parsed
+        if version == "base":
+            for root in (settings.detection_model_dir, Path(config.DETECTION_MODEL_DIR)):
+                root = Path(root).resolve()
+                try:
+                    pre = find_weights_in_dir(version_dir(root, model, PRETRAINED_VERSION))
+                except ValueError:
+                    pre = None
+                if pre is not None:
+                    logger.debug("inference weights: %s (pretrained)", pre)
+                    return pre
+
+    return resolve_model_path(model_name)
 
 
 def resolve_model_path(model_name: str) -> Path:

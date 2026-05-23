@@ -104,13 +104,18 @@ class ModelClient(MLAirClient):
         return None
 
     def resolve_version_row(
-        self, model_id: str, *, stage: str = "production"
+        self, model_id: str,
+        *,
+        stage: str = "production",
+        fallback_latest: bool = False,
     ) -> dict[str, Any] | None:
-        """Production version first, else highest version number."""
+        """Version with the requested ``stage`` only (optional fallback to highest version)."""
         row = self.find_version_by_stage(model_id, stage)
         if row and row.get("artifact_uri"):
             return row
-        return self.find_latest_version(model_id)
+        if fallback_latest:
+            return self.find_latest_version(model_id)
+        return None
 
     def find_latest_version(self, model_id: str, *, run_id: str | None = None) -> dict[str, Any] | None:
         versions = self.list_versions(model_id)

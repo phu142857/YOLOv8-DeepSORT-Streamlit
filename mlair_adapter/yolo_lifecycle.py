@@ -74,7 +74,7 @@ def run_prepare(context: dict[str, Any]) -> dict[str, Any]:
         shutil.rmtree(dataset_dir)
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    data_yaml, n_train, n_val = _build_yolo_dataset(version_id, dataset_dir)
+    data_yaml, n_train, n_val = _build_yolo_dataset(version_id, dataset_dir, context=context)
     state = save_state(
         run_id,
         {

@@ -76,6 +76,8 @@ def find_weights_in_dir(version_path: Path) -> Path | None:
 
 # Local folders aligned with MLAir production after a full sync.
 CANONICAL_LOCAL_VERSIONS = ("base", "production")
+# Frozen COCO weights for Vehicle Detection inference (not overwritten by Hub sync).
+PRETRAINED_VERSION = "pretrained"
 
 
 def pick_canonical_local_entry(root: Path, model: str) -> LocalModelEntry | None:
