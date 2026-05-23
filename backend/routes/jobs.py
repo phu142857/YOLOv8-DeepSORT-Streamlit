@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
@@ -12,8 +13,26 @@ from inference.validation import ValidationError, validate_model
 from shared.artifacts import ArtifactStore
 from shared.job_store import job_store
 from shared.schemas import JobCreate, JobResponse, JobStatus, SourceType
+from shared.settings import settings
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
+
+
+def _pick_job_source_file(source_dir: Path) -> Path | None:
+    """Prefer image/video in source/; ignore mlair_pull.json and other sidecar files."""
+    media: list[Path] = []
+    other: list[Path] = []
+    for f in source_dir.iterdir():
+        if not f.is_file() or f.name == "mlair_pull.json":
+            continue
+        suf = f.suffix.lower()
+        if suf in settings.video_extensions or suf in settings.image_extensions:
+            media.append(f)
+        else:
+            other.append(f)
+    if media:
+        return sorted(media)[0]
+    return sorted(other)[0] if other else None
 
 
 def _get_store() -> ArtifactStore:
@@ -105,11 +124,9 @@ def start_job(job_id: str, background_tasks: BackgroundTasks, force: bool = Fals
                 shutil.rmtree(sub)
             sub.mkdir(parents=True, exist_ok=True)
 
-    source_files = [f for f in layout["source"].iterdir() if f.is_file()]
-    if not source_files:
+    source_path = _pick_job_source_file(layout["source"])
+    if source_path is None:
         raise HTTPException(status_code=400, detail="no source file — upload first")
-
-    source_path = source_files[0]
     try:
         validate_model(job.model_name)
     except ValidationError as exc:

@@ -1,10 +1,10 @@
-# Full stack — pull MLAir images (no git clone). CV builds from this repo.
+# Full stack. MLAir: build :local images in ../ml-air, then CV plugin overlay here.
 #
-#   cp .env.docker.example .env
-#   docker compose pull
-#   docker compose up -d
+#   cd ../ml-air && docker build -t ml-air-api:local -f api/Dockerfile . && …
+#   cd YOLOv8-DeepSORT-Streamlit && ./scripts/build_mlair_local_images.sh   # or only: compose build api
+#   cp .env.docker.example .env && docker compose up -d
 #
-# Images: ghcr.io/phu142857/ml-air-{api,scheduler,executor,frontend,realtime}:latest
+# GHCR instead: set MLAIR_*_IMAGE or MLAIR_REGISTRY + MLAIR_TAG in .env (see .env.docker.example).
 
 name: cv-mlair-stack
 
@@ -61,9 +61,10 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.mlair-api-cv-plugins
       args:
-        MLAIR_API_IMAGE: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-api:${MLAIR_TAG:-latest}
+        # Must be built from local ml-air (./scripts/build_mlair_local_images.sh), not GHCR :latest alone.
+        MLAIR_API_IMAGE: ${MLAIR_API_IMAGE:-ml-air-api:local}
     image: ${MLAIR_API_CV_IMAGE:-ml-air-api:cv-workload}
-    pull_policy: build
+    pull_policy: ${MLAIR_API_PULL_POLICY:-build}
     container_name: ml-air-api
     # appuser (1000). Do not call ml-air docker-entrypoint.sh here — it uses runuser and
     # fails under rootless podman / when the process is already non-root.
@@ -122,8 +123,8 @@ services:
     restart: unless-stopped
 
   scheduler:
-    image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-scheduler:${MLAIR_TAG:-latest}
-    pull_policy: always
+    image: ${MLAIR_SCHEDULER_IMAGE:-ml-air-scheduler:local}
+    pull_policy: ${MLAIR_PULL_POLICY:-missing}
     environment:
       ML_AIR_TASK_EXECUTION_MODE: ${ML_AIR_TASK_EXECUTION_MODE:-external}
       ML_AIR_REDIS_URL: redis://redis:6379/0
@@ -139,8 +140,8 @@ services:
     restart: unless-stopped
 
   realtime:
-    image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-realtime:${MLAIR_TAG:-latest}
-    pull_policy: always
+    image: ${MLAIR_REALTIME_IMAGE:-ml-air-realtime:local}
+    pull_policy: ${MLAIR_PULL_POLICY:-missing}
     container_name: ml-air-realtime
     environment:
       ML_AIR_REDIS_URL: redis://redis:6379/0
@@ -165,8 +166,8 @@ services:
     restart: unless-stopped
 
   executor:
-    image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-executor:${MLAIR_TAG:-latest}
-    pull_policy: always
+    image: ${MLAIR_EXECUTOR_IMAGE:-ml-air-executor:local}
+    pull_policy: ${MLAIR_PULL_POLICY:-missing}
     container_name: ml-air-executor
     environment:
       ML_AIR_REDIS_URL: redis://redis:6379/0
@@ -231,8 +232,8 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-frontend:${MLAIR_TAG:-latest}
-    pull_policy: always
+    image: ${MLAIR_FRONTEND_IMAGE:-ml-air-frontend:local}
+    pull_policy: ${MLAIR_PULL_POLICY:-missing}
     container_name: ml-air-frontend
     environment:
       MLAIR_NEXT_INTERNAL_API_URL: http://api:8080

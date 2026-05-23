@@ -26,6 +26,7 @@ from mlair_adapter.torch_compat import apply_torch_checkpoint_compat
 
 apply_torch_checkpoint_compat()
 
+from mlair_adapter.run_tracking_client import build_complete_task_body
 from mlair_adapter.task_log_client import TaskLogSink
 from mlair_adapter.worker_context import plugin_context_from_lease_task
 from mlair_adapter.worker_log_capture import capture_task_logs
@@ -118,20 +119,6 @@ def _run_handler_with_heartbeat(
         hb.join(timeout=5)
 
 
-def _metrics_from_result(result: dict[str, Any]) -> dict[str, Any]:
-    metrics = dict(result.get("metrics") or {})
-    if result.get("mAP50") is not None:
-        metrics["mAP50"] = result["mAP50"]
-    if result.get("production_map50") is not None:
-        metrics["production_mAP50"] = result["production_map50"]
-    gate = result.get("gate")
-    if isinstance(gate, dict):
-        for k in ("candidate_map50", "production_map50", "passed"):
-            if gate.get(k) is not None:
-                metrics[f"gate_{k}"] = gate[k]
-    return metrics
-
-
 def main() -> None:
     base = os.getenv("MLAIR_API_BASE_URL", "http://localhost:8080").rstrip("/")
     token = (os.getenv("MLAIR_WORKER_TOKEN") or os.getenv("ML_AIR_WORKER_TOKEN") or "").strip()
@@ -186,13 +173,7 @@ def main() -> None:
                 log_sink = TaskLogSink(base, token, worker_id, tid)
                 with capture_task_logs(log_sink):
                     result = _run_handler_with_heartbeat(base, token, worker_id, tid, handler, ctx)
-                checkpoint = str(result.get("checkpoint") or "")
-                metrics = _metrics_from_result(result)
-                body: dict[str, Any] = {"worker_id": worker_id, "metrics": metrics}
-                if checkpoint:
-                    body["artifact_uri"] = (
-                        f"file://{checkpoint}" if checkpoint.startswith("/") else checkpoint
-                    )
+                body = build_complete_task_body(worker_id, result, plugin=plugin)
                 _post_json(_task_url(base, tid, "complete"), token, body)
                 print(f"complete task_id={tid} plugin={plugin} step={result.get('step')}", flush=True)
             except Exception as exc:

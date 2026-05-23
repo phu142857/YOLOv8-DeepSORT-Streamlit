@@ -31,6 +31,13 @@ wait_http() {
 echo "==> Waiting for MLAir API..."
 wait_http "http://127.0.0.1:${ML_AIR_API_PORT}/health" "ml-air-api"
 
+if ! docker exec "$MLAIR_API_CONTAINER" python -c \
+  "from app.domains.orchestration import worker_task_service as w; assert hasattr(w,'_persist_run_plugin_tracking')" \
+  2>/dev/null; then
+  echo "WARN: ml-air-api image lacks tracking persist (Hub Metrics/Artifacts will be empty)." >&2
+  echo "  Run: ./scripts/build_mlair_local_images.sh && docker compose up -d --force-recreate api frontend" >&2
+fi
+
 echo "==> Fixing artifact volume permissions (model versions / .pt import)..."
 MLAIR_API_CONTAINER="$MLAIR_API_CONTAINER" ./scripts/fix_mlair_model_artifacts_perm.sh
 

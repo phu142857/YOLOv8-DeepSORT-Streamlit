@@ -95,6 +95,7 @@ def run_prepare(context: dict[str, Any]) -> dict[str, Any]:
         "train_images": n_train,
         "val_images": n_val,
         "workspace": str(work_dir),
+        "metrics": {"train_images": float(n_train), "val_images": float(n_val)},
         "state": state,
     }
 

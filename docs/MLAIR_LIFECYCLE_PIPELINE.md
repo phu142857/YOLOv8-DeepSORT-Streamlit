@@ -94,16 +94,52 @@ PyTorch **2.6+** mặc định `torch.load(..., weights_only=True)` — file `.p
 - Rebuild image worker: `docker compose build cv-lifecycle-workload && docker compose up -d mlair-cv-train-worker`
 - Chạy **run pipeline mới** (task cũ đã `attempt: 3` / FAILED).
 
+## Hub Run details: Logs / Metrics / Artifacts
+
+| Tab | Nguồn | CV worker |
+|-----|--------|-----------|
+| **Logs** | `POST /v1/tasks/{id}/logs` → Redis run log stream | `capture_task_logs` |
+| **Metrics** | `complete_task` → `run_metrics` (`{plugin}.{key}`) | `metrics` trong body `complete` |
+| **Artifacts** | `complete_task` → `run_artifacts` | `artifacts[]` (`train/checkpoint`, `prepare/data.yaml`, …) |
+
+MLAir (bản mới) persist tracking trong `complete_task` / `fail_task`; Hub poll tracking + `run.tracking.updated`.
+
+**Deploy (bắt buộc nếu Hub vẫn trống):** Image `ml-air-api:cv-workload` chỉ **cài plugin** trên base API — base phải là bản ml-air **có** `_persist_run_plugin_tracking` + `POST /tasks/.../logs`.
+
+```bash
+# Trong ../ml-air (cùng lệnh bạn đang dùng):
+cd ../ml-air
+docker build -t ml-air-api:local -f api/Dockerfile .
+docker build -t ml-air-scheduler:local -f scheduler/Dockerfile .
+docker build -t ml-air-executor:local -f executor/Dockerfile .
+docker build -t ml-air-frontend:local -f frontend/Dockerfile .
+docker build -t ml-air-realtime:local -f realtime/Dockerfile .
+
+# Trong repo CV — overlay plugin lên ml-air-api:local:
+cd ../YOLOv8-DeepSORT-Streamlit
+MLAIR_API_IMAGE=ml-air-api:local docker compose build api
+docker compose up -d --force-recreate api scheduler executor realtime frontend mlair-cv-train-worker
+
+docker exec ml-air-api python -c "from app.domains.orchestration import worker_task_service as w; print('tracking_ok', hasattr(w,'_persist_run_plugin_tracking'))"
+# phải in: tracking_ok True
+```
+
+Hoặc một lệnh: `./scripts/build_mlair_local_images.sh` (build 5 image + `api` + CV worker).
+
+Compose mặc định dùng `ml-air-*:local`, `pull_policy: missing` — không kéo GHCR đè bản local.
+
+Sau đó chạy **pipeline run mới** (run cũ không có dữ liệu tracking trong DB).
+
 ## Runner logs (Hub) ↔ task CV
 
 MLAir (API + Hub mới) ghi log qua `POST /v1/tasks/{task_id}/logs` → Redis `mlair:logs:{run_id}` + index task. Tab **Runner logs** filter theo task/plugin.
 
 Worker CV (`mlair_cv_pipeline_worker`) tee stdout/stderr + logging Ultralytics vào API đó khi task `RUNNING`.
 
-Cần image **ml-air-api** và **ml-air-frontend** có bản có feature log (build/push từ repo ml-air, hoặc tag mới trên GHCR). Sau đó:
+Cần **ml-air-api:local** (hoặc `cv-workload` build từ base đó) + **ml-air-frontend:local**. Sau đó:
 
 ```bash
-docker compose build cv-lifecycle-workload mlair-cv-train-worker  # image worker CV
+docker compose build cv-api mlair-cv-train-worker
 docker compose up -d api frontend mlair-cv-train-worker
 ```
 
