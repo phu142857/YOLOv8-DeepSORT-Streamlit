@@ -1,0 +1,20 @@
+aws_region    = "ap-southeast-1"
+environment   = "dev"
+project_name  = "cv-mlair"
+
+vpc_cidr           = "10.20.0.0/16"
+app_volume_size_gb = 80
+
+# Account policy (also defaulted in deploy.sh — no export required)
+node_instance_type  = "m7i-flex.large"
+db_instance_class   = "db.t3.micro"
+db_allocated_storage_gb = 20
+
+redis_node_type = "cache.t3.micro"
+
+enable_https        = false
+acm_certificate_arn = ""
+
+allowed_cidr_blocks = ["0.0.0.0/0"]
+
+image_tag = "latest"

@@ -1,0 +1,6 @@
+# Copy to backend.hcl and create bucket/table first.
+bucket         = "cv-mlair-terraform-state-dev"
+key            = "cv-mlair/dev/terraform.tfstate"
+region         = "ap-southeast-1"
+encrypt        = true
+dynamodb_table = "cv-mlair-terraform-locks"

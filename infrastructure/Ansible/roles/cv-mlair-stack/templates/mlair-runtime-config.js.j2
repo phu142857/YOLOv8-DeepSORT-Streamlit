@@ -1,0 +1,10 @@
+// Generated at deploy — browser API/WS via ALB (not localhost).
+window.__ML_AIR_RUNTIME_CONFIG__ = {
+  environment: "aws",
+  api_base_url: "http://{{ alb_dns_name }}",
+  realtime_base_url: "ws://{{ alb_dns_name }}/ws",
+  default_tenant_hint: "default",
+  default_project_hint: "default_project",
+  hub_default_route: "datasets",
+  features: {}
+};

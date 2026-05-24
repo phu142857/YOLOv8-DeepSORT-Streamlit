@@ -1,0 +1,91 @@
+---
+- name: Fetch app secrets from Secrets Manager
+  ansible.builtin.command:
+    cmd: >
+      aws secretsmanager get-secret-value
+      --secret-id {{ secrets_manager_arn }}
+      --region {{ aws_region }}
+      --query SecretString --output text
+  register: secrets_raw
+  changed_when: false
+  no_log: true
+
+- name: Parse secrets JSON
+  ansible.builtin.set_fact:
+    app_secrets: "{{ secrets_raw.stdout | from_json }}"
+  no_log: true
+
+- name: Ensure app root
+  ansible.builtin.file:
+    path: "{{ app_root }}"
+    state: directory
+    owner: ec2-user
+    group: docker
+    mode: "0755"
+
+- name: Copy docker-compose.aws.yml
+  ansible.builtin.copy:
+    src: "{{ repo_src_path }}infrastructure/Docker/docker-compose.aws.yml"
+    dest: "{{ app_root }}/{{ compose_file }}"
+    owner: ec2-user
+    group: docker
+    mode: "0644"
+
+- name: Copy bootstrap script
+  ansible.builtin.copy:
+    src: "{{ repo_src_path }}scripts/post_stack_bootstrap.sh"
+    dest: "{{ app_root }}/post_stack_bootstrap.sh"
+    mode: "0755"
+
+- name: Render .env for compose
+  ansible.builtin.template:
+    src: env.aws.j2
+    dest: "{{ app_root }}/.env"
+    owner: ec2-user
+    group: docker
+    mode: "0600"
+
+- name: Render MLAir browser runtime config (fixes localhost:8080 in Hub)
+  ansible.builtin.template:
+    src: mlair-runtime-config.js.j2
+    dest: "{{ app_root }}/mlair-runtime-config.js"
+    owner: ec2-user
+    group: docker
+    mode: "0644"
+
+- name: ECR login
+  ansible.builtin.shell: |
+    aws ecr get-login-password --region {{ aws_region }} | \
+      docker login --username AWS --password-stdin {{ ecr_registry }}
+  become_user: ec2-user
+  changed_when: true
+
+- name: Pull images
+  ansible.builtin.command:
+    cmd: docker compose -f {{ compose_file }} pull
+    chdir: "{{ app_root }}"
+  become_user: ec2-user
+
+- name: Start stack
+  ansible.builtin.command:
+    cmd: docker compose -f {{ compose_file }} up -d --remove-orphans
+    chdir: "{{ app_root }}"
+  become_user: ec2-user
+
+- name: Wait for cv-api health
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8000/health
+    status_code: 200
+  retries: 24
+  delay: 10
+
+- name: Run bootstrap (registry sync + pipeline)
+  ansible.builtin.command:
+    cmd: ./post_stack_bootstrap.sh
+    chdir: "{{ app_root }}"
+  become_user: ec2-user
+  environment:
+    CV_API_URL: http://127.0.0.1:8000
+    ML_AIR_API_PORT: "8080"
+  async: 600
+  poll: 30

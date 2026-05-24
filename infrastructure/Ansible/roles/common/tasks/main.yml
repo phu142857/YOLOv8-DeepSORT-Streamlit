@@ -1,0 +1,23 @@
+---
+- name: Ensure Docker is running
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Install git (clone repo on host)
+  ansible.builtin.package:
+    name: git
+    state: present
+
+- name: Create app root
+  ansible.builtin.file:
+    path: "{{ app_root }}"
+    state: directory
+    owner: ec2-user
+    group: docker
+    mode: "0755"
+
+- name: Verify EFS mounts
+  ansible.builtin.command: mountpoint -q /mnt/efs/cv-artifacts
+  changed_when: false

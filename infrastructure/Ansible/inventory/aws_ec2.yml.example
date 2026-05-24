@@ -1,0 +1,10 @@
+all:
+  children:
+    cv_mlair:
+      hosts:
+        app:
+          ansible_host: i-0123456789abcdef0
+          ansible_user: ec2-user
+          ansible_connection: community.aws.aws_ssm
+          ansible_aws_ssm_instance_id: i-0123456789abcdef0
+          ansible_aws_ssm_region: ap-southeast-1

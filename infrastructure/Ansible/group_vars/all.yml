@@ -1,0 +1,20 @@
+---
+# Override via -e or group_vars/{env}.yml
+app_root: "/opt/{{ name_prefix }}"
+compose_file: docker-compose.aws.yml
+image_tag: latest
+
+# From Terraform outputs
+name_prefix: cv-mlair-dev
+ecr_registry: "123456789012.dkr.ecr.ap-southeast-1.amazonaws.com"
+aws_region: ap-southeast-1
+
+# From Terraform outputs (public ALB DNS)
+alb_dns_name: cv-mlair-dev-alb-xxxx.ap-southeast-1.elb.amazonaws.com
+rds_endpoint: cv-mlair-dev-postgres.xxxx.rds.amazonaws.com
+redis_endpoint: cv-mlair-dev-redis.xxxx.cache.amazonaws.com
+
+secrets_manager_arn: arn:aws:secretsmanager:ap-southeast-1:123456789012:secret:cv-mlair-dev/app-env
+
+repo_src_path: "{{ playbook_dir }}/../../../"
+# Or deploy from CI artifact — set deploy_bundle_tar

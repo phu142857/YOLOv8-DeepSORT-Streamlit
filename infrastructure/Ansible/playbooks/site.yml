@@ -1,0 +1,10 @@
+---
+- name: CV + MLAir AWS app host
+  hosts: cv_mlair
+  gather_facts: true
+
+  roles:
+    - role: common
+      tags: [common]
+    - role: cv-mlair-stack
+      tags: [deploy]

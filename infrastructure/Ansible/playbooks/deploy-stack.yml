@@ -1,0 +1,8 @@
+---
+- name: Redeploy containers only
+  hosts: cv_mlair
+  gather_facts: false
+
+  roles:
+    - role: cv-mlair-stack
+      tags: [deploy]

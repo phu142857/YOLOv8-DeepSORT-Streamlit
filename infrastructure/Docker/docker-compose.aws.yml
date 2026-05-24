@@ -1,0 +1,209 @@
+# Standalone AWS stack (no local postgres/redis). Deploy to /opt/${NAME_PREFIX}/ on EC2.
+# Env: Infrastructure/Docker/.env.aws (from Ansible template)
+
+name: cv-mlair-stack
+
+services:
+  mlair-artifact-init:
+    image: alpine:3.20
+    user: "0:0"
+    volumes:
+      - /mnt/efs/mlair-datasets:/datasets
+      - /mnt/efs/mlair-models:/models
+      - /mnt/efs/cv-artifacts:/cv-artifacts
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /datasets /models /cv-artifacts/jobs /cv-artifacts/uploads /cv-artifacts/mlair_pipeline_runs
+        mkdir -p /datasets/cv-runtime-frames /models/weights/detection
+        chown -R 1000:1000 /datasets /models /cv-artifacts
+    restart: "no"
+
+  api:
+    image: ${ECR_REGISTRY}/${NAME_PREFIX}/ml-air-api-cv-workload:${IMAGE_TAG:-latest}
+    container_name: ml-air-api
+    user: "1000:1000"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mkdir -p /mlair/artifacts/models /mlair/artifacts/datasets
+        cd /app && alembic upgrade head
+        exec uvicorn main:app --host 0.0.0.0 --port 8080
+    environment:
+      ML_AIR_REDIS_URL: ${ML_AIR_REDIS_URL}
+      ML_AIR_DATABASE_URL: ${ML_AIR_DATABASE_URL}
+      ML_AIR_JWT_HS256_SECRET: ${ML_AIR_JWT_HS256_SECRET}
+      ML_AIR_TRACKING_TOKEN: ${ML_AIR_TRACKING_TOKEN}
+      ML_AIR_SKIP_APPROVAL_FOR_PROMOTE: ${ML_AIR_SKIP_APPROVAL_FOR_PROMOTE:-1}
+      ML_AIR_MANIFEST_SIGNING_KEY: ${ML_AIR_MANIFEST_SIGNING_KEY}
+      ML_AIR_MANIFEST_ACTIVE_KEY_ID: v1
+      ML_AIR_DATASET_ARTIFACT_ROOT: file:///mlair/artifacts/datasets
+      ML_AIR_DEFAULT_MODEL_ARTIFACT_ROOT: file:///mlair/artifacts/models
+      ML_AIR_HTTP_TASK_ALLOWED_HOSTS: ${ML_AIR_HTTP_TASK_ALLOWED_HOSTS}
+      MLAIR_MODEL_PROMOTE_WEBHOOK_URL: http://cv-api:8000/api/v1/mlair/promote-webhook
+      MLAIR_MODEL_PROMOTE_WEBHOOK_BEARER_TOKEN: ${CV_MLAIR_PROMOTE_WEBHOOK_TOKEN}
+      MLAIR_REALTIME_ENABLED: "true"
+      ML_AIR_RUNTIME_REALTIME_BASE_URL: ${ML_AIR_RUNTIME_REALTIME_BASE_URL}
+      ML_AIR_RUNTIME_API_BASE_URL: ${ML_AIR_RUNTIME_API_BASE_URL}
+      ML_AIR_TASK_EXECUTION_MODE: external
+      ML_AIR_TASK_LEASE_SECONDS: "300"
+    volumes:
+      - /mnt/efs/mlair-datasets:/mlair/artifacts/datasets
+      - /mnt/efs/mlair-models:/mlair/artifacts/models
+    ports:
+      - "8080:8080"
+    depends_on:
+      mlair-artifact-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 120s
+    restart: unless-stopped
+
+  scheduler:
+    image: ${MLAIR_REGISTRY}/ml-air-scheduler:${MLAIR_IMAGE_TAG:-latest}
+    environment:
+      ML_AIR_TASK_EXECUTION_MODE: external
+      ML_AIR_REDIS_URL: ${ML_AIR_REDIS_URL}
+      ML_AIR_DATABASE_URL: ${ML_AIR_DATABASE_URL}
+      ML_AIR_MANIFEST_SIGNING_KEY: ${ML_AIR_MANIFEST_SIGNING_KEY}
+      ML_AIR_MANIFEST_ACTIVE_KEY_ID: v1
+      MLAIR_REALTIME_ENABLED: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  realtime:
+    image: ${MLAIR_REGISTRY}/ml-air-realtime:${MLAIR_IMAGE_TAG:-latest}
+    container_name: ml-air-realtime
+    environment:
+      ML_AIR_REDIS_URL: ${ML_AIR_REDIS_URL}
+      ML_AIR_JWT_HS256_SECRET: ${ML_AIR_JWT_HS256_SECRET}
+      MLAIR_REALTIME_ENABLED: "true"
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+
+  executor:
+    image: ${MLAIR_REGISTRY}/ml-air-executor:${MLAIR_IMAGE_TAG:-latest}
+    container_name: ml-air-executor
+    environment:
+      ML_AIR_REDIS_URL: ${ML_AIR_REDIS_URL}
+      ML_AIR_DATABASE_URL: ${ML_AIR_DATABASE_URL}
+      ML_AIR_API_BASE_URL: http://api:8080
+      ML_AIR_TRACKING_TOKEN: ${ML_AIR_TRACKING_TOKEN}
+      ML_AIR_MANIFEST_SIGNING_KEY: ${ML_AIR_MANIFEST_SIGNING_KEY}
+      ML_AIR_MANIFEST_ACTIVE_KEY_ID: v1
+      CV_MLAIR_TRAIN_CALLBACK_TOKEN: ${CV_MLAIR_TRAIN_CALLBACK_TOKEN}
+      CV_MLAIR_PROMOTE_WEBHOOK_TOKEN: ${CV_MLAIR_PROMOTE_WEBHOOK_TOKEN}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    image: ${MLAIR_REGISTRY}/ml-air-frontend:${MLAIR_IMAGE_TAG:-latest}
+    container_name: ml-air-frontend
+    environment:
+      MLAIR_NEXT_INTERNAL_API_URL: http://api:8080
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+      NEXT_PUBLIC_MLAIR_REALTIME_WS: ${NEXT_PUBLIC_MLAIR_REALTIME_WS}
+    volumes:
+      - ./mlair-runtime-config.js:/app/public/mlair-runtime-config.js:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+      realtime:
+        condition: service_started
+    restart: unless-stopped
+
+  cv-api:
+    image: ${ECR_REGISTRY}/${NAME_PREFIX}/cv-lifecycle-workload:${IMAGE_TAG:-latest}
+    container_name: cv-lifecycle-api
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    environment:
+      PYTHONPATH: /app
+      CV_ARTIFACT_ROOT: /app/artifacts
+      CV_API_BASE_URL: http://cv-api:8000
+      CV_MLAIR_API_URL: http://api:8080
+      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN}
+      CV_MLAIR_TENANT: default
+      CV_MLAIR_PROJECT: default_project
+      CV_MLAIR_AUTO_INGEST: "1"
+      CV_MLAIR_PERSIST_INGEST_FRAMES: "1"
+      CV_MLAIR_SYNC_AFTER_TRAIN: "0"
+      CV_MLAIR_HUB_URL: ${CV_MLAIR_HUB_URL}
+    volumes:
+      - /mnt/efs/cv-artifacts:/app/artifacts
+      - /mnt/efs/mlair-models/weights:/app/weights
+      - /mnt/efs/mlair-models:/mlair/artifacts/models:ro
+      - /mnt/efs/mlair-datasets:/mlair/artifacts/datasets
+    ports:
+      - "8000:8000"
+    depends_on:
+      mlair-artifact-init:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 180s
+    restart: unless-stopped
+
+  cv-ui:
+    image: ${ECR_REGISTRY}/${NAME_PREFIX}/cv-lifecycle-workload:${IMAGE_TAG:-latest}
+    container_name: cv-lifecycle-ui
+    command: streamlit run frontend/app.py --server.port=8501 --server.address=0.0.0.0 --server.baseUrlPath=/cv --browser.gatherUsageStats=false
+    environment:
+      PYTHONPATH: /app
+      CV_API_BASE_URL: http://cv-api:8000
+      CV_MLAIR_HUB_URL: ${CV_MLAIR_HUB_URL}
+      CV_CLIENT_SAVE_TO_DATASET: "1"
+    volumes:
+      - /mnt/efs/mlair-models/weights:/app/weights:ro
+    ports:
+      - "8501:8501"
+    depends_on:
+      cv-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mlair-cv-train-worker:
+    image: ${ECR_REGISTRY}/${NAME_PREFIX}/cv-lifecycle-workload:${IMAGE_TAG:-latest}
+    container_name: mlair-cv-train-worker
+    command: python scripts/mlair_cv_pipeline_worker.py
+    environment:
+      PYTHONPATH: /app
+      MLAIR_API_BASE_URL: http://api:8080
+      MLAIR_WORKER_TOKEN: ${ML_AIR_TRACKING_TOKEN}
+      MLAIR_WORKER_ID: cv-lifecycle-worker
+      MLAIR_CAPABILITIES: cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine
+      CV_ARTIFACT_ROOT: /app/artifacts
+      CV_MLAIR_API_URL: http://api:8080
+      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN}
+      CV_MLAIR_MODEL_ARTIFACT_MOUNT: /mlair/artifacts
+      CV_MLAIR_PERSIST_INGEST_FRAMES: "1"
+      MLAIR_HEARTBEAT_INTERVAL_SEC: "15"
+      CV_MLAIR_TRAIN_EPOCHS: "10"
+    volumes:
+      - /mnt/efs/cv-artifacts:/app/artifacts
+      - /mnt/efs/mlair-models/weights:/app/weights
+      - /mnt/efs/mlair-datasets:/mlair/artifacts/datasets
+      - /mnt/efs/mlair-models:/mlair/artifacts/models:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      cv-api:
+        condition: service_healthy
+    restart: unless-stopped
