@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from mlair_adapter.dataset_client import DatasetClient
+from mlair_adapter.dataset_client import DatasetClient, materialized_version_event_payload
 from mlair_adapter.events_client import emit_event
 from shared.settings import settings
 from workers.base import WorkerContext, WorkerResult
@@ -63,7 +63,7 @@ class MLAirIngestWorker:
             if result.get("materialized"):
                 emit_event(
                     "dataset.version.created",
-                    result["materialized"],
+                    materialized_version_event_payload(result),
                     job_id=ctx.job_id,
                     store=ctx.store,
                 )

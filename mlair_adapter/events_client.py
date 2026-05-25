@@ -20,6 +20,10 @@ def emit_event(
     store: ArtifactStore | None = None,
 ) -> None:
     """Record semantic event locally; Phase 4 can forward to Redis / webhooks."""
+    if not isinstance(payload, dict):
+        raise TypeError(
+            f"emit_event payload must be a dict, got {type(payload).__name__!r} for {event_type}"
+        )
     record = {
         "type": event_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),

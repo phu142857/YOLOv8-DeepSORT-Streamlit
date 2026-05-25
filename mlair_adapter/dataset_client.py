@@ -29,6 +29,53 @@ def _items_from_response(data: Any) -> list[dict[str, Any]]:
     return items_from_response(data)
 
 
+def normalize_buffer_append_result(
+    out: dict[str, Any],
+    *,
+    job_id: str,
+    row_count: int,
+    dataset_name: str,
+) -> dict[str, Any]:
+    """Flatten MLAir ``buffer/append`` response for job metadata and UI."""
+    out.setdefault("job_id", job_id)
+    out.setdefault("rows", row_count)
+    out.setdefault("dataset_name", dataset_name)
+
+    ver = out.get("dataset_version_id") or out.get("version_id")
+    version_obj = out.get("version")
+    if not ver and isinstance(version_obj, dict):
+        ver = version_obj.get("dataset_version_id") or version_obj.get("version_id") or version_obj.get("id")
+    if ver:
+        out["dataset_version_id"] = str(ver)
+
+    ds = out.get("dataset_id")
+    dataset_obj = out.get("dataset")
+    if not ds and isinstance(dataset_obj, dict):
+        ds = dataset_obj.get("dataset_id") or dataset_obj.get("id")
+    if ds:
+        out["dataset_id"] = str(ds)
+
+    return out
+
+
+def materialized_version_event_payload(result: dict[str, Any]) -> dict[str, Any]:
+    """
+    Build a dict for ``emit_event`` when MLAir returns ``materialized: true`` (bool)
+    instead of a nested object.
+    """
+    mat = result.get("materialized")
+    if isinstance(mat, dict):
+        return mat
+    return {
+        "materialized": True,
+        "dataset_version_id": result.get("dataset_version_id"),
+        "dataset_id": result.get("dataset_id"),
+        "current_size": result.get("current_size") or result.get("mlair_buffer_current_size"),
+        "target_threshold": result.get("target_threshold"),
+        "triggered_by": result.get("triggered_by", "buffer_threshold"),
+    }
+
+
 class DatasetClient(MLAirClient):
     def list_datasets(self, limit: int = 100) -> list[dict[str, Any]]:
         data = self.get(f"{self._prefix()}/datasets", params={"limit": limit})
@@ -289,11 +336,9 @@ class DatasetClient(MLAirClient):
                 source_type="runtime_manifest",
                 execution_id=job_id,
             )
-        # Normalize keys so the rest of the CV workload can rely on them.
-        out.setdefault("job_id", job_id)
-        out.setdefault("rows", row_count)
-        out.setdefault("dataset_name", name)
-        return out
+        return normalize_buffer_append_result(
+            out, job_id=job_id, row_count=row_count, dataset_name=name
+        )
 
     def download_version_csv(self, version_id: str) -> bytes:
         return self.get_bytes(f"{self._prefix()}/dataset-versions/{version_id}/download")
