@@ -59,9 +59,26 @@ def show_job_results(api: CVApiClient, job: JobResponse) -> None:
             det_data = json.loads(Path(det_tmp.name).read_text(encoding="utf-8"))
         dets = det_data.get("detections") if isinstance(det_data, dict) else None
         if dets is not None and len(dets) == 0:
+            diag_hint = ""
+            try:
+                diag = api.get_model_diagnostics(job.model_name)
+                inf = (diag.get("inference_resolved") or {}).get("path", "")
+                flags = diag.get("flags") or {}
+                if flags.get("inference_uses_production_base"):
+                    model_part = job.model_name.split("/", 1)[0]
+                    diag_hint = (
+                        f" Inference used Hub production weights: `{inf}`. "
+                        "Check Hub metrics, promote an older version, or run "
+                        f"`./scripts/restore_detection_pretrained.sh {model_part}`."
+                    )
+                elif inf:
+                    diag_hint = f" Weights: `{inf}`."
+            except Exception:
+                pass
             st.warning(
                 "No objects detected — `detections.json` is empty. "
-                "Try model **yolov8s/base**, lower confidence, or restore pretrained weights. "
+                "Try another model, lower confidence, or restore COCO pretrained. "
+                f"Diagnostics: `GET /api/v1/models/{job.model_name}/diagnostics`.{diag_hint} "
                 "Hub Train will fail prepare without labels."
             )
     except Exception:
@@ -121,7 +138,9 @@ def show_dataset_feedback(api: CVApiClient, job: JobResponse) -> None:
             if not mlair.get("configured"):
                 st.warning(
                     "MLAir is not configured on cv-api. Set `CV_MLAIR_API_URL` and "
-                    "`CV_MLAIR_TOKEN` on the **cv-api** service, then restart."
+                    "`CV_MLAIR_TOKEN` on **cv-api** must match a token ml-air-api accepts "
+                    "(e.g. `admin-token`, or the same value registered in `ML_AIR_AUTH_TOKENS_JSON` on AWS). "
+                    "401 = invalid token, not wrong role — `maintainer-token` is enough for dataset ingest."
                 )
             else:
                 st.warning(

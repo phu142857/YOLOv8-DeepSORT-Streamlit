@@ -32,10 +32,14 @@ from backend.routes import (  # noqa: E402
     uploads,
 )
 from mlair_adapter.registry_sync import start_registry_sync_background  # noqa: E402
+from shared.detection_weights_bootstrap import startup_ensure_detection_weights  # noqa: E402
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    summary = startup_ensure_detection_weights()
+    if summary:
+        logger.info("detection weights bootstrap: %s", summary)
     start_registry_sync_background()
     yield
 
@@ -97,6 +101,7 @@ def runtime_config() -> dict:
         "mlair_sync_interval_sec": settings.mlair_sync_interval_sec,
         "mlair_model_id": settings.mlair_model_id or None,
         "mlair_api_url": settings.mlair_api_url or None,
+        "s3_models_bucket": settings.s3_models_bucket or None,
         "artifact_root": str(settings.artifact_root),
         "api_base_url": settings.api_base_url,
         "max_video_frames": settings.max_video_frames,

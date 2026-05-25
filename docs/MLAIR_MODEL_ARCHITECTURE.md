@@ -11,8 +11,8 @@
 
 | Lớp | Vị trí | Nội dung |
 |-----|--------|----------|
-| **CV disk** | `CV_DETECTION_MODEL_DIR` → `weights/detection` | `{model}/base/weights.pt`, `{model}/production/weights.pt`, optional `v1`, `v2`… |
-| **Cấu trúc job** | spec `yolov8n/base` | Folder `weights/detection/yolov8n/base/` |
+| **CV disk** | `CV_DETECTION_MODEL_DIR` → `weights/detection` | **`base/` + `production/`** = bản đang chạy (mirror Hub production). **`v1/`, `v2/`…** = archive mỗi lần train/import (không xóa khi rollback). **`pretrained/`** = COCO gốc. |
+| **Cấu trúc job** | spec `yolov8n/base` | Luôn trỏ slot **active**; UI label hiển thị `MLAir production vN` từ control plane. |
 | **Cache (optional)** | `weights/registry/{model_id}/vN.pt` | Mirror để resolve `registry:{uuid}` nếu cần |
 
 Streamlit / detection worker → `resolve_local_weights()` → **chỉ disk**.
@@ -80,12 +80,15 @@ flowchart TB
 
 Hàm: `sync_mlair_registry_core()` — `mlair_adapter/registry_sync.py`
 
-- Push canonical checkpoint mỗi tên model (`base` → `production` → `vN` cao nhất)
-- Pull production → căn `base` + `production`
+- **Push** canonical checkpoint mỗi tên model (`base` → Hub import)
+- **Production pull** (mặc định `CV_MLAIR_SYNC_PRODUCTION_FROM_HUB=1`): nếu Hub `production_version` ≠ local `base/`, copy bản Hub chọn vào `base/` + `production/` + `v{N}/` — **không** tự chọn `vN` cao nhất trên disk
+- `sync-full` (bootstrap): chỉ push; pull production đầy đủ chỉ khi `CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL=1`
 - Pipeline bootstrap + `PUT .../pipeline-mapping` (khi startup)
 - Chỉ import folder **canonical** trừ khi `CV_MLAIR_DISK_IMPORT_ALL_VERSIONS=1`
 
 Gọi tự động: `start_registry_sync_background()` trong `backend/main.py` lifespan.
+
+**Model mới không chắc tốt hơn model cũ:** train → import `staging` → gate; chỉ promote khi pass. Rollback: trên Hub **promote lại v1** (hoặc version cũ) → webhook/resync ghi đè `base/`; `v2/` vẫn nằm trên disk để so sánh / train tiếp.
 
 ### B) Sau train
 

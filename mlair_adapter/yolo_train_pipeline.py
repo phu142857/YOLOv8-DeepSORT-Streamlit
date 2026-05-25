@@ -23,7 +23,14 @@ from mlair_adapter.dataset_client import DatasetClient
 from shared.artifacts import ArtifactStore
 from shared.image_io import load_image_bgr
 from mlair_adapter.model_client import ModelClient
-from shared.model_resolve import ensure_registry_weights, is_registry_model, registry_model_id, resolve_model_path
+from shared.model_resolve import (
+    ensure_registry_weights,
+    is_registry_model,
+    parse_model_spec,
+    registry_model_id,
+    resolve_model_path,
+)
+from shared.weights_catalog import PRETRAINED_VERSION, find_weights_in_dir, version_dir
 from shared.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -162,7 +169,7 @@ def _detection_contiguous_class_id(det: dict[str, Any]) -> int | None:
 
 def _resolve_base_weights(context: dict[str, Any]) -> Path:
     artifact_uri = str(context.get("artifact_uri") or "").strip()
-    model_id = str(context.get("model_id") or context.get("mlair_model_id") or settings.mlair_model_id or "").strip()
+    model_id = str(context.get("model_id") or context.get("mlair_model_id") or "").strip()
 
     if artifact_uri.startswith("file://") or artifact_uri.startswith("/"):
         client = ModelClient()
@@ -175,6 +182,18 @@ def _resolve_base_weights(context: dict[str, Any]) -> Path:
     spec = settings.mlair_train_base_model_spec
     if is_registry_model(spec):
         return ensure_registry_weights(registry_model_id(spec))
+    parsed = parse_model_spec(spec)
+    if parsed:
+        model, version = parsed
+        if version == "base":
+            root = settings.detection_model_dir
+            try:
+                pre = find_weights_in_dir(version_dir(root, model, PRETRAINED_VERSION))
+            except ValueError:
+                pre = None
+            if pre is not None:
+                logger.info("train base weights: %s (COCO pretrained, not production base)", pre)
+                return pre
     return resolve_model_path(spec)
 
 
@@ -355,7 +374,7 @@ def run_yolo_training(context: dict[str, Any], *, work_root: Path | None = None)
     Optional: dataset_id, artifact_uri, run_id.
     """
     version_id = str(context.get("dataset_version_id") or "").strip()
-    model_id = str(context.get("model_id") or context.get("mlair_model_id") or settings.mlair_model_id or "").strip()
+    model_id = str(context.get("model_id") or context.get("mlair_model_id") or "").strip()
     if not version_id:
         raise ValueError("dataset_version_id is required")
     if not model_id:

@@ -46,3 +46,7 @@ output "database_url" {
 output "redis_url" {
   value = "redis://${aws_elasticache_cluster.main.cache_nodes[0].address}:6379/0"
 }
+
+output "models_s3_bucket" {
+  value = aws_s3_bucket.models.id
+}

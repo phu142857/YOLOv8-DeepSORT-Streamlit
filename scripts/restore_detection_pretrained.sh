@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Restore official Ultralytics COCO weights into weights/detection/{model}/pretrained/ (+ base/).
-# Inference prefers pretrained/ so Hub sync to base/ does not break Vehicle Detection.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MODEL="${1:-yolov8n}"
+[[ -f "$ROOT/.env" ]] && set -a && source "$ROOT/.env" && set +a
+_DEFAULT_MODEL="${CV_DEFAULT_MODEL:-yolov8s/base}"
+MODEL="${1:-${_DEFAULT_MODEL%%/*}}"
 CONTAINER="${CV_API_CONTAINER:-cv-lifecycle-api}"
 
 _restore_in_python() {
@@ -51,4 +52,4 @@ else
   exit 1
 fi
 
-echo "Run a new Execution (select yolov8s/base or yolov8n after restore)."
+echo "Run a new Execution with ${MODEL}/base (or promote on Hub to switch production)."

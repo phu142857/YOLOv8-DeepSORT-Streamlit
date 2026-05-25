@@ -25,7 +25,7 @@ class SourceType(str, Enum):
 
 class JobCreate(BaseModel):
     source_type: SourceType = SourceType.VIDEO
-    model_name: str = "yolov8n/base"
+    model_name: str = "yolov8s/base"
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     upload_id: str | None = None
     mlair_dataset_id: str | None = None
@@ -148,7 +148,12 @@ class LocalModelsResponse(BaseModel):
 
 
 class UnifiedModelOption(BaseModel):
-    """One logical model: on-disk ``weights/detection/{model}/base`` + optional MLAir binding by name."""
+    """
+    One logical model for the CV UI.
+
+    ``spec`` → ``{model}/base`` (active weights). ``mlair_production_version`` is Hub's chosen
+    production (may differ from highest ``vN`` folder on disk after rollback).
+    """
 
     model: str
     spec: str  # always job field, e.g. yolov8n/base

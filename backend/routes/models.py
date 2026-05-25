@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from shared.detector_diagnostics import detection_model_diagnostics
 from shared.schemas import LocalModelOption, LocalModelsResponse, UnifiedModelsResponse
 from shared.settings import settings
 from shared.unified_catalog import list_unified_detection_models
@@ -17,6 +18,12 @@ router = APIRouter(prefix="/api/v1/models", tags=["models"])
 def list_unified_models() -> UnifiedModelsResponse:
     """One model per ``weights/detection/{name}``; MLAir registry row matched by the same name."""
     return list_unified_detection_models()
+
+
+@router.get("/{spec:path}/diagnostics")
+def model_diagnostics(spec: str) -> dict:
+    """SHA256 / YOLO metadata / which path inference will load (debug empty detections)."""
+    return detection_model_diagnostics(spec)
 
 
 @router.get("/local", response_model=LocalModelsResponse)

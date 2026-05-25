@@ -21,6 +21,7 @@ REDIS_EP="$(terraform -chdir="$TF_DIR" output -raw redis_endpoint)"
 ECR_REG="$(terraform -chdir="$TF_DIR" output -raw ecr_registry_url)"
 APP_ROOT="/opt/${NAME_PREFIX}"
 SECRETS_ARN="$(terraform -chdir="$TF_DIR" output -raw secrets_manager_arn)"
+MODELS_S3_BUCKET="$(terraform -chdir="$TF_DIR" output -raw models_s3_bucket 2>/dev/null || true)"
 
 command -v aws >/dev/null || { echo "aws CLI required" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
@@ -53,6 +54,8 @@ dotenv_set "$ENV_FILE" ML_AIR_JWT_HS256_SECRET "$JWT"
 dotenv_set "$ENV_FILE" ML_AIR_TRACKING_TOKEN "$TRACK"
 dotenv_set "$ENV_FILE" ML_AIR_MANIFEST_SIGNING_KEY "$JWT"
 dotenv_set "$ENV_FILE" CV_MLAIR_TOKEN "$CV_TOKEN"
+AUTH_TOKENS_JSON="$(mlair_auth_tokens_json "$CV_TOKEN")"
+dotenv_set "$ENV_FILE" ML_AIR_AUTH_TOKENS_JSON "$AUTH_TOKENS_JSON"
 dotenv_set "$ENV_FILE" CV_MLAIR_TRAIN_CALLBACK_TOKEN "$TRACK"
 dotenv_set "$ENV_FILE" CV_MLAIR_PROMOTE_WEBHOOK_TOKEN "$TRACK"
 dotenv_set "$ENV_FILE" NEXT_PUBLIC_API_BASE_URL "http://${ALB_DNS}"
@@ -69,6 +72,12 @@ dotenv_set "$ENV_FILE" CV_MLAIR_AUTO_SYNC_MODELS "1"
 dotenv_set "$ENV_FILE" CV_MLAIR_SYNC_ON_STARTUP "1"
 dotenv_set "$ENV_FILE" CV_CLIENT_SAVE_TO_DATASET "1"
 dotenv_set "$ENV_FILE" CV_MLAIR_PERSIST_INGEST_FRAMES "1"
+if [[ -n "${MODELS_S3_BUCKET:-}" ]]; then
+  dotenv_set "$ENV_FILE" CV_MODELS_S3_BUCKET "$MODELS_S3_BUCKET"
+  dotenv_set "$ENV_FILE" CV_MODELS_S3_PREFIX "ml-models"
+  dotenv_set "$ENV_FILE" CV_MODELS_S3_REGION "$AWS_REGION"
+  dotenv_set "$ENV_FILE" CV_DETECTION_BOOTSTRAP_MODELS "yolov8n,yolov8s,yolov8m,yolov8l,yolov8x"
+fi
 if [[ -n "${GHCR_TOKEN:-}" ]]; then
   dotenv_set "$ENV_FILE" GHCR_TOKEN "$GHCR_TOKEN"
   dotenv_set "$ENV_FILE" GHCR_USER "${GHCR_USER:-phu142857}"

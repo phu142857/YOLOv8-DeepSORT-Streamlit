@@ -186,12 +186,7 @@ class ModelSyncService:
                 raise FileNotFoundError(f"no {stage} version for model {model_id}")
             version = int(row.get("version") or 0)
 
-        cache_path = ensure_registry_weights(model_id, stage=stage)
-        if not cache_path.is_file():
-            row = self._client.get_version(model_id, version)
-            artifact_uri = str(row.get("artifact_uri") or "")
-            self._client.download_artifact(artifact_uri, cache_path)
-
+        cache_path = ensure_registry_weights(model_id, version=version)
         digest = _sha256_file(cache_path)
         root = Path(settings.detection_model_dir)
         base_w = find_weights_in_dir(version_dir(root, model_name, "base"))
@@ -208,7 +203,17 @@ class ModelSyncService:
             shutil.copy2(cache_path, target)
             dest[ver] = target
 
-        return {"production": dest["production"], "base": dest["base"], "sha256": digest, "version": version}
+        version_folder = ensure_version_layout(root, model_name, f"v{version}")
+        shutil.copy2(cache_path, version_folder / "weights.pt")
+        dest[f"v{version}"] = version_folder / "weights.pt"
+
+        return {
+            "production": dest["production"],
+            "base": dest["base"],
+            "version_dir": dest[f"v{version}"],
+            "sha256": digest,
+            "version": version,
+        }
 
     def _invalidate_registry_cache(self, model_id: str) -> None:
         cache_dir = settings.mlair_weights_cache_dir / model_id
@@ -235,7 +240,16 @@ class ModelSyncService:
         if hub_version is None:
             return False
         base = state.get(model_spec(model_name, "base")) or {}
-        return int(base.get("registry_version") or -1) == hub_version
+        if int(base.get("registry_version") or -1) != hub_version:
+            return False
+        expected_sha = str(base.get("sha256") or "")
+        if not expected_sha:
+            return True
+        root = Path(settings.detection_model_dir)
+        on_disk = find_weights_in_dir(version_dir(root, model_name, "base"))
+        if on_disk is None:
+            return False
+        return _sha256_file(on_disk) == expected_sha
 
     def apply_mlair_promotion_to_local(
         self,
@@ -295,6 +309,29 @@ class ModelSyncService:
         self._save_state(state)
         ensure_registry_weights(model_id, stage=stage)
 
+        s3_upload: dict[str, Any] | None = None
+        if settings.s3_models_upload_on_promote:
+            try:
+                from shared.s3_model_store import (
+                    hub_version_tag,
+                    s3_enabled,
+                    upload_checkpoint,
+                )
+
+                if s3_enabled():
+                    tag = hub_version_tag(version)
+                    upload_checkpoint(
+                        model_name,
+                        tag,
+                        Path(mirrored["base"]),
+                        set_production=True,
+                        sha256=str(mirrored["sha256"]),
+                    )
+                    s3_upload = {"ok": True, "version": tag, "model": model_name}
+            except Exception as exc:
+                logger.warning("S3 upload after promote failed for %s: %s", model_name, exc)
+                s3_upload = {"ok": False, "error": str(exc)}
+
         logger.info(
             "Hub promote applied locally: %s production v%s → %s",
             model_name,
@@ -311,6 +348,7 @@ class ModelSyncService:
             "local_base": str(mirrored["base"]),
             "local_production": str(mirrored["production"]),
             "sha256": str(mirrored["sha256"]),
+            "s3_upload": s3_upload,
         }
 
     def sync_pull_registry_models(self, state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -536,7 +574,11 @@ class ModelSyncService:
 
         with _SYNC_LOCK:
             push_results = self.sync_push_local_models(root=root, state=state)
-            pull_results = self.sync_pull_registry_models(state)
+            pull_results: list[dict[str, Any]] = []
+            if settings.mlair_mirror_registry_to_local:
+                pull_results = self.sync_pull_registry_models(state)
+            else:
+                logger.debug("sync_full: skip Hub→disk pull (CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL=0)")
 
             # Models only on disk, not yet in registry
             registry_names = {str(r.get("name") or "") for r in self._client.list_models()}

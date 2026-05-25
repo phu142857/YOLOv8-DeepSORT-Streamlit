@@ -26,7 +26,19 @@ class Settings:
     api_port: int = int(_env("CV_API_PORT", "8000"))
     api_base_url: str = _env("CV_API_BASE_URL", "http://127.0.0.1:8000")
     detection_model_dir: Path = Path(_env("CV_DETECTION_MODEL_DIR", "weights/detection"))
-    default_model: str = _env("CV_DEFAULT_MODEL", "yolov8n/base")
+    # Comma-separated Ultralytics names to seed on empty disk (EFS after destroy, first deploy).
+    detection_bootstrap_models: str = _env(
+        "CV_DETECTION_BOOTSTRAP_MODELS", "yolov8n,yolov8s,yolov8m,yolov8l,yolov8x"
+    )
+    default_model: str = _env("CV_DEFAULT_MODEL", "yolov8s/base")
+    # Extra dropdown rows ``{model} (COCO pretrained)`` when base != pretrained (recovery).
+    catalog_include_pretrained: bool = _env_bool("CV_CATALOG_INCLUDE_PRETRAINED", False)
+    # S3 source of truth for promoted checkpoints (inference always reads local cache).
+    s3_models_bucket: str = _env("CV_MODELS_S3_BUCKET", "")
+    s3_models_prefix: str = _env("CV_MODELS_S3_PREFIX", "ml-models")
+    s3_models_region: str = _env("CV_MODELS_S3_REGION", "") or _env("AWS_REGION", "ap-southeast-1")
+    s3_models_sync_on_startup: bool = _env_bool("CV_MODELS_S3_SYNC_ON_STARTUP", True)
+    s3_models_upload_on_promote: bool = _env_bool("CV_MODELS_S3_UPLOAD_ON_PROMOTE", True)
     frame_extract_interval: int = int(_env("CV_FRAME_EXTRACT_INTERVAL", "30"))
     max_upload_mb: int = int(_env("CV_MAX_UPLOAD_MB", "500"))
     max_video_frames: int = int(_env("CV_MAX_VIDEO_FRAMES", "0"))  # 0 = no limit
@@ -69,7 +81,10 @@ class Settings:
     mlair_registry_sync_at_startup: bool = _env_bool("CV_MLAIR_REGISTRY_SYNC_AT_STARTUP", True)
     mlair_disk_sync_mode: str = _env("CV_MLAIR_DISK_SYNC_MODE", "metadata")  # metadata | state
     mlair_disk_import_all_versions: bool = _env_bool("CV_MLAIR_DISK_IMPORT_ALL_VERSIONS", False)
-    mlair_mirror_registry_to_local: bool = _env_bool("CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL", True)
+    # Hub = catalog/control plane. ``sync-full`` pull all models (bootstrap); keep off by default.
+    mlair_mirror_registry_to_local: bool = _env_bool("CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL", False)
+    # Align ``base/`` with Hub ``production_version`` on promote webhook + registry resync (default on).
+    mlair_sync_production_from_hub: bool = _env_bool("CV_MLAIR_SYNC_PRODUCTION_FROM_HUB", True)
     mlair_sync_state_path: Path = Path(_env("CV_MLAIR_SYNC_STATE_PATH", "artifacts/.mlair_model_sync_state.json"))
     # MLAir pipeline cv-yolo-vehicle-train: plugin (Hub Train UI) | http (executor-only, Hub blocks train)
     mlair_pipeline_mode: str = _env("CV_MLAIR_PIPELINE_MODE", "plugin").strip().lower()
@@ -91,7 +106,7 @@ class Settings:
         "CV_MLAIR_PROMOTE_WEBHOOK_TOKEN",
         _env("CV_MLAIR_TRAIN_CALLBACK_TOKEN", "admin-token"),
     )
-    mlair_train_base_model_spec: str = _env("CV_MLAIR_TRAIN_BASE_MODEL", "yolov8n/base")
+    mlair_train_base_model_spec: str = _env("CV_MLAIR_TRAIN_BASE_MODEL", "yolov8s/pretrained")
     mlair_train_epochs: int = int(_env("CV_MLAIR_TRAIN_EPOCHS", "10"))
     mlair_train_batch: int = int(_env("CV_MLAIR_TRAIN_BATCH", "8"))
     mlair_train_imgsz: int = int(_env("CV_MLAIR_TRAIN_IMGSZ", "640"))

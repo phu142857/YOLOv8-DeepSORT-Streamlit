@@ -33,13 +33,9 @@ SOURCES_LIST = ["Image", "Video", "Webcam"]
 DETECTION_MODEL_DIR = ROOT / "weights" / "detection"
 DEFAULT_MODEL_SPEC = "yolov8s/base"
 
-# Legacy flat paths (optional); prefer model/version folders.
-YOLOv8n = DETECTION_MODEL_DIR / "yolov8n" / "base" / "weights.pt"
-YOLOv8x = DETECTION_MODEL_DIR / "yolov8x" / "base" / "weights.pt"
-
 # Fallback list when API discovery is unavailable (UI only).
 DETECTION_MODEL_LIST = [
-    "yolov8s/base",
+    DEFAULT_MODEL_SPEC,
     "yolov8n/base",
     "yolov8m/base",
     "yolov8l/base",

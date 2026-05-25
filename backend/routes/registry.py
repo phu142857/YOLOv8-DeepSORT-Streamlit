@@ -8,6 +8,7 @@ from mlair_adapter.model_client import ModelClient
 from mlair_adapter.model_sync import ModelSyncService
 from mlair_adapter.pipeline_bootstrap import ensure_cv_yolo_pipeline, map_all_models_to_pipeline
 from mlair_adapter.registry_sync import sync_mlair_registry_core
+from shared.detection_weights_bootstrap import startup_ensure_detection_weights
 from shared.model_resolve import REGISTRY_PREFIX, ensure_registry_weights
 from shared.schemas import RegistryModelOption, RegistryModelsResponse
 from shared.settings import settings
@@ -105,6 +106,33 @@ def sync_registry_weights(model_id: str, stage: str = "production") -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.post("/models/bootstrap")
+def bootstrap_detection_weights() -> dict:
+    """Seed empty EFS: S3 production manifest and/or Ultralytics COCO pretrained."""
+    return {"ok": True, "models": startup_ensure_detection_weights()}
+
+
+@router.post("/models/s3/sync")
+def sync_detection_from_s3(model: str | None = None) -> dict:
+    """Pull production checkpoint(s) from S3 into ``weights/detection`` (local cache)."""
+    from shared.s3_model_store import s3_enabled, sync_model_from_s3
+
+    if not s3_enabled():
+        raise HTTPException(status_code=503, detail="CV_MODELS_S3_BUCKET not configured")
+    if model:
+        path = sync_model_from_s3(model.strip())
+        if path is None:
+            raise HTTPException(status_code=404, detail=f"no S3 production manifest for {model}")
+        return {"ok": True, "model": model, "local_path": str(path)}
+    out: dict[str, str] = {}
+    from shared.detection_weights_bootstrap import list_bootstrap_model_names
+
+    for name in list_bootstrap_model_names():
+        p = sync_model_from_s3(name)
+        out[name] = str(p) if p else "skipped"
+    return {"ok": True, "models": out}
+
+
 @router.get("/config")
 def registry_config() -> dict:
     return {
@@ -115,4 +143,6 @@ def registry_config() -> dict:
         "sync_interval_sec": settings.mlair_sync_interval_sec,
         "sync_unifies_base_and_production": True,
         "weights_cache_dir": str(settings.mlair_weights_cache_dir),
+        "s3_models_bucket": settings.s3_models_bucket or None,
+        "detection_bootstrap_models": settings.detection_bootstrap_models,
     }

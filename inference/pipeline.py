@@ -45,6 +45,7 @@ def process_video_job(
     model_path = resolve_model_path(model_name)
     if not model_path.is_file():
         raise FileNotFoundError(f"Model not found: {model_path}")
+    logger.info("job %s detection model spec=%s weights=%s", job_id, model_name, model_path)
     model = load_model(str(model_path))
 
     config.OBJECT_COUNTER = None
@@ -169,6 +170,7 @@ def process_frames_dir_job(
     model_path = resolve_model_path(model_name)
     if not model_path.is_file():
         raise FileNotFoundError(f"Model not found: {model_path}")
+    logger.info("job %s detection model spec=%s weights=%s", job_id, model_name, model_path)
     model = load_model(str(model_path))
 
     config.OBJECT_COUNTER = None
@@ -257,6 +259,7 @@ def process_image_job(
     model_path = resolve_model_path(model_name)
     if not model_path.is_file():
         raise FileNotFoundError(f"Model not found: {model_path}")
+    logger.info("job %s detection model spec=%s weights=%s", job_id, model_name, model_path)
     model = load_model(str(model_path))
 
     frame = load_image_bgr(image_path)

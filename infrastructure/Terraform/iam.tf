@@ -37,6 +37,19 @@ data "aws_iam_policy_document" "app" {
     ]
     resources = [aws_efs_file_system.main.arn]
   }
+
+  statement {
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      aws_s3_bucket.models.arn,
+      "${aws_s3_bucket.models.arn}/*",
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "app" {

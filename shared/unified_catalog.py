@@ -1,4 +1,11 @@
-"""Single catalog: one row per ``weights/detection/{model}``, MLAir linked by name."""
+"""
+Catalog for CV UI: one row per logical model.
+
+- ``v1/``, ``v2/``, … on disk = version archives (train/import).
+- ``base/`` + ``production/`` = active weights chosen by MLAir ``production`` (control plane).
+- Job spec is always ``{model}/base``; label shows Hub production version (e.g. MLAir v2).
+- Rollback: promote an older version on Hub → webhook/resync updates ``base/`` only; archives stay.
+"""
 
 from __future__ import annotations
 
@@ -12,12 +19,14 @@ from shared.model_resolve import REGISTRY_PREFIX, is_registry_model
 from shared.schemas import UnifiedModelOption, UnifiedModelsResponse
 from shared.settings import settings
 from shared.weights_catalog import (
+    PRETRAINED_VERSION,
     find_weights_in_dir,
     list_detection_model_names,
     model_spec,
     parse_model_spec,
     pick_canonical_local_entry,
     version_dir,
+    weights_files_equivalent,
 )
 
 
@@ -69,8 +78,6 @@ def resolve_mlair_model_id(
         if hub and hub.get("model_id"):
             return str(hub["model_id"])
 
-    if settings.mlair_model_id:
-        return settings.mlair_model_id
     return None
 
 
@@ -97,14 +104,6 @@ def list_unified_detection_models(
         if entry is None:
             continue
 
-        base_weights = find_weights_in_dir(version_dir(root, model_name, "base"))
-        if base_weights is not None:
-            spec = model_spec(model_name, "base")
-            weights_path = base_weights
-        else:
-            spec = entry.spec
-            weights_path = entry.weights_path
-
         st = state.get(model_spec(model_name, "base")) or state.get(entry.spec) or {}
         model_id = str(st.get("model_id") or "") or None
         prod_ver = st.get("registry_version")
@@ -119,9 +118,17 @@ def list_unified_detection_models(
                 if resolved and resolved.get("version") is not None:
                     prod_ver = int(resolved["version"])
 
+        base_weights = find_weights_in_dir(version_dir(root, model_name, "base"))
+        spec = entry.spec
+        weights_path = entry.weights_path
+        # Jobs use ``{model}/base`` (active slot). ``mlair_production_version`` = Hub control plane.
+        if base_weights is not None:
+            spec = model_spec(model_name, "base")
+            weights_path = base_weights
+
         label = model_name
         if prod_ver is not None:
-            label = f"{model_name} (MLAir v{prod_ver})"
+            label = f"{model_name} (MLAir production v{prod_ver})"
         elif reg:
             label = f"{model_name} (MLAir)"
 
@@ -136,6 +143,25 @@ def list_unified_detection_models(
                 aligned=aligned,
             )
         )
+
+        pre_weights = find_weights_in_dir(version_dir(root, model_name, PRETRAINED_VERSION))
+        if (
+            settings.catalog_include_pretrained
+            and pre_weights is not None
+            and base_weights is not None
+            and not weights_files_equivalent(pre_weights, base_weights)
+        ):
+            items.append(
+                UnifiedModelOption(
+                    model=model_name,
+                    spec=model_spec(model_name, PRETRAINED_VERSION),
+                    label=f"{model_name} (COCO pretrained)",
+                    weights_path=str(pre_weights),
+                    mlair_model_id=model_id,
+                    mlair_production_version=None,
+                    aligned=False,
+                )
+            )
 
     return UnifiedModelsResponse(
         root=str(root),

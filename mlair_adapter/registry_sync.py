@@ -22,10 +22,13 @@ def sync_mlair_registry_core(
     CV workload registry sync:
 
     1. Push canonical checkpoints from ``weights/detection`` → MLAir ``versions/import``.
-    2. Pull production → ``base`` + ``production`` local folders.
-    3. Optionally register pipeline + map models (Hub Train).
+    2. When ``CV_MLAIR_SYNC_PRODUCTION_FROM_HUB=1`` (default): if Hub ``production_version``
+       differs from local ``base/``, copy that version → ``base`` + ``production`` + ``v{N}/``
+       (older ``v1``, ``v2`` folders are kept as archives).
 
-    Inference always uses **local disk**; MLAir is catalog/governance only.
+    Full registry pull on ``sync-full`` only when ``CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL=1``.
+
+    Inference always uses **local disk**; MLAir decides *which* version is production.
     """
     svc = ModelSyncService()
     if not svc.enabled:
@@ -33,6 +36,16 @@ def sync_mlair_registry_core(
 
     out: dict = {"ok": True, "ts": time.time()}
     out["models"] = svc.sync_full(force=force)
+
+    if settings.mlair_sync_production_from_hub:
+        try:
+            state = svc.load_sync_state()
+            pulled = svc.sync_pull_registry_models(state)
+            out["production_pull"] = pulled
+            out["production_pulled"] = sum(1 for r in pulled if r.get("action") == "pull")
+        except Exception as exc:
+            logger.warning("registry core: Hub production pull failed: %s", exc)
+            out["production_pull"] = {"ok": False, "error": str(exc)}
 
     if _hub_models_missing_versions():
         logger.info("registry core: Hub missing versions after sync, forcing push")

@@ -150,6 +150,14 @@ class CVApiClient:
         r.raise_for_status()
         return UnifiedModelsResponse(**r.json())
 
+    def get_model_diagnostics(self, spec: str) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        safe = quote(spec, safe="/")
+        r = httpx.get(f"{self.base_url}/api/v1/models/{safe}/diagnostics", timeout=60.0)
+        r.raise_for_status()
+        return r.json()
+
     def get_job_lifecycle(self, job_id: str) -> JobLifecycleResponse:
         r = httpx.get(f"{self.base_url}/api/v1/jobs/{job_id}/lifecycle", timeout=30.0)
         r.raise_for_status()

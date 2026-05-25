@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 API_URL="${CV_API_BASE_URL:-http://127.0.0.1:8000}"
-MODEL="${CV_DEFAULT_MODEL:-yolov8n/base}"
+MODEL="${CV_DEFAULT_MODEL:-yolov8s/base}"
 
 echo "== CV Lifecycle E2E demo =="
 echo "API: $API_URL"

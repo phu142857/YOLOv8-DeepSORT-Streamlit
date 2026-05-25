@@ -13,9 +13,21 @@ import config
 from shared.model_resolve import resolve_inference_model_path as _resolve_model_path
 
 
-@lru_cache(maxsize=4)
+def _model_cache_key(path: Path) -> str:
+    """Invalidate in-process YOLO cache when checkpoint file is replaced (e.g. Hub promote v2)."""
+    resolved = path.resolve()
+    st = resolved.stat()
+    return f"{resolved}:{st.st_mtime_ns}:{st.st_size}"
+
+
+@lru_cache(maxsize=8)
+def _load_model_cached(cache_key: str, resolved_path: str) -> YOLO:
+    return YOLO(resolved_path)
+
+
 def load_model(model_path: str) -> YOLO:
-    return YOLO(model_path)
+    path = Path(model_path)
+    return _load_model_cached(_model_cache_key(path), str(path.resolve()))
 
 
 def resolve_model_path(model_name: str) -> Path:

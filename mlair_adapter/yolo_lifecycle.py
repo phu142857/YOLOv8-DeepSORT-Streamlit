@@ -50,12 +50,21 @@ def _extract_map50(metrics: Any) -> float | None:
 
 def _context_ids(context: dict[str, Any]) -> tuple[str, str, str]:
     version_id = str(context.get("dataset_version_id") or "").strip()
-    model_id = str(context.get("model_id") or context.get("mlair_model_id") or settings.mlair_model_id or "").strip()
+    model_id = str(context.get("model_id") or context.get("mlair_model_id") or "").strip()
+    if not model_id:
+        from shared.unified_catalog import resolve_mlair_model_id
+
+        for key in ("model_spec", "model_name", "model"):
+            spec = str(context.get(key) or "").strip()
+            if spec:
+                model_id = resolve_mlair_model_id(spec) or ""
+                if model_id:
+                    break
     run_id = str(context.get("run_id") or "manual").strip()
     if not version_id:
         raise ValueError("dataset_version_id is required")
     if not model_id:
-        raise ValueError("model_id is required")
+        raise ValueError("model_id is required (set in pipeline context or register model on Hub)")
     return run_id, model_id, version_id
 
 
@@ -247,9 +256,20 @@ def run_hard_example_mine(context: dict[str, Any]) -> dict[str, Any]:
     """
     run_id = str(context.get("run_id") or "mine").strip()
     version_id = str(context.get("dataset_version_id") or "").strip()
-    model_id = str(context.get("model_id") or context.get("mlair_model_id") or settings.mlair_model_id or "").strip()
+    model_id = str(context.get("model_id") or context.get("mlair_model_id") or "").strip()
+    if not model_id:
+        from shared.unified_catalog import resolve_mlair_model_id
+
+        for key in ("model_spec", "model_name", "model"):
+            spec = str(context.get(key) or "").strip()
+            if spec:
+                model_id = resolve_mlair_model_id(spec) or ""
+                if model_id:
+                    break
     if not version_id:
         raise ValueError("dataset_version_id is required for hard-example mining")
+    if not model_id:
+        raise ValueError("model_id is required for hard-example mining")
 
     client = DatasetClient()
     if not client.enabled:

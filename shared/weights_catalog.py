@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,24 @@ def version_dir(root: Path, model: str, version: str) -> Path:
     return root / model / version
 
 
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with Path(path).open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def weights_files_equivalent(a: Path, b: Path) -> bool:
+    """True when both paths exist and contain the same checkpoint bytes."""
+    a, b = Path(a), Path(b)
+    if not a.is_file() or not b.is_file():
+        return False
+    if a.stat().st_size != b.stat().st_size:
+        return False
+    return sha256_file(a) == sha256_file(b)
+
+
 def find_weights_in_dir(version_path: Path) -> Path | None:
     """Resolve checkpoint inside ``.../{model}/{version}/``."""
     version_path = Path(version_path)
@@ -74,10 +93,11 @@ def find_weights_in_dir(version_path: Path) -> Path | None:
     return None
 
 
-# Local folders aligned with MLAir production after a full sync.
+# Active inference slot: mirrors MLAir ``production`` (promote webhook / production pull).
 CANONICAL_LOCAL_VERSIONS = ("base", "production")
-# Frozen COCO weights for Vehicle Detection inference (not overwritten by Hub sync).
+# Immutable COCO seed; never overwritten by promote.
 PRETRAINED_VERSION = "pretrained"
+# Per-train archives on disk: ``v1/``, ``v2/``, … (kept when production rolls back to an older vN).
 
 
 def pick_canonical_local_entry(root: Path, model: str) -> LocalModelEntry | None:
