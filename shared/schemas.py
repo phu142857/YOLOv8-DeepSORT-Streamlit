@@ -63,6 +63,16 @@ class UploadResponse(BaseModel):
     size_bytes: int
 
 
+class DatasetZipImportResponse(BaseModel):
+    ok: bool = True
+    import_job_id: str = ""
+    dataset_name: str = ""
+    image_count: int = 0
+    dataset_id: str | None = None
+    dataset_version_id: str | None = None
+    hub_url: str = ""
+
+
 class ArtifactManifest(BaseModel):
     job_id: str
     source_video: str | None = None

@@ -9,6 +9,7 @@ from typing import Any, Callable
 import httpx
 
 from shared.schemas import (
+    DatasetZipImportResponse,
     JobArtifactsResponse,
     JobCreate,
     JobLifecycleResponse,
@@ -44,6 +45,25 @@ class CVApiClient:
         r = httpx.post(f"{self.base_url}/api/v1/uploads", files=files, timeout=self.timeout)
         r.raise_for_status()
         return r.json()
+
+    def import_dataset_zip(
+        self,
+        zip_bytes: bytes,
+        filename: str,
+        dataset_name: str,
+        *,
+        timeout: float | None = None,
+    ) -> DatasetZipImportResponse:
+        files = {"file": (filename, zip_bytes, "application/zip")}
+        data = {"dataset_name": dataset_name}
+        r = httpx.post(
+            f"{self.base_url}/api/v1/datasets/import-zip",
+            files=files,
+            data=data,
+            timeout=timeout or max(self.timeout, 600.0),
+        )
+        r.raise_for_status()
+        return DatasetZipImportResponse(**r.json())
 
     def create_job(self, spec: JobCreate) -> JobResponse:
         r = httpx.post(

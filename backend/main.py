@@ -22,6 +22,7 @@ init_job_store(artifact_store)
 # Import routes after init_job_store so all modules share the same JobStore instance.
 from backend.routes import (  # noqa: E402
     artifacts,
+    datasets,
     frames,
     jobs,
     lifecycle,
@@ -60,6 +61,7 @@ app.add_middleware(
 )
 
 app.include_router(uploads.router)
+app.include_router(datasets.router)
 app.include_router(jobs.router)
 app.include_router(artifacts.router)
 app.include_router(frames.router)

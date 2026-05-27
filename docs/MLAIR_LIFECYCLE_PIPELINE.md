@@ -9,7 +9,7 @@ Pipeline **`cv-yolo-lifecycle-train`** (DAG 4 bước) + **`cv-hard-example-mine
 | `cv_workload_artifacts` | `/app/artifacts` (cv-api, worker) | jobs, uploads, pipeline state |
 | `ml_air_dataset_artifacts` | `/mlair/artifacts/datasets` | frame sau ingest: `cv-runtime-frames/{job_id}/*.jpg` |
 
-Ingest (`CV_MLAIR_PERSIST_INGEST_FRAMES=1`): copy frame vào volume dataset, manifest dùng `file://` — train/prepare không cần `127.0.0.1`.
+Ingest mặc định (`CV_MLAIR_PERSIST_INGEST_FRAMES=0`): frame chỉ ở `artifacts/jobs/{job_id}/frames/`; manifest dùng `http://cv-api/.../frames/`. Train/prepare đọc qua EFS chung hoặc HTTP. Bật `=1` chỉ khi worker không mount `cv-artifacts`.
 
 Copy dữ liệu cũ từ host (một lần, nếu cần):
 

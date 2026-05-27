@@ -15,6 +15,7 @@ from frontend.client_inference import (
     render_video_client,
     render_webcam_client,
 )
+from frontend.dataset_import_ui import render_dataset_zip_import
 from shared.settings import settings
 
 st.set_page_config(
@@ -100,6 +101,9 @@ elif mlair_configured:
     st.sidebar.caption(
         "Inference uses `base/weights.pt` (or `vN/` if listed) — synced from MLAir production."
     )
+
+if api_online and mlair_configured:
+    render_dataset_zip_import(api, hub_url=hub_url)
 
 if not api_online:
     st.error("CV API is offline. Start the stack: `./scripts/docker-up.sh` or `./scripts/run_api.sh`")

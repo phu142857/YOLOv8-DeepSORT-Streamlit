@@ -19,8 +19,8 @@ def _env_bool(key: str, default: bool = True) -> bool:
 @dataclass(frozen=True)
 class Settings:
     artifact_root: Path = Path(_env("CV_ARTIFACT_ROOT", "artifacts"))
-    # Copy ingested frames into MLAir dataset volume (file:// URIs) — required for cross-container train.
-    mlair_persist_ingest_frames: bool = _env_bool("CV_MLAIR_PERSIST_INGEST_FRAMES", True)
+    # Copy frames to MLAir dataset volume (duplicate on EFS). Default off: train reads artifacts/jobs via shared EFS or cv-api URL.
+    mlair_persist_ingest_frames: bool = _env_bool("CV_MLAIR_PERSIST_INGEST_FRAMES", False)
     mlair_runtime_frames_subdir: str = _env("CV_MLAIR_RUNTIME_FRAMES_SUBDIR", "cv-runtime-frames")
     api_host: str = _env("CV_API_HOST", "0.0.0.0")
     api_port: int = int(_env("CV_API_PORT", "8000"))
@@ -41,6 +41,7 @@ class Settings:
     s3_models_upload_on_promote: bool = _env_bool("CV_MODELS_S3_UPLOAD_ON_PROMOTE", True)
     frame_extract_interval: int = int(_env("CV_FRAME_EXTRACT_INTERVAL", "30"))
     max_upload_mb: int = int(_env("CV_MAX_UPLOAD_MB", "500"))
+    dataset_zip_max_mb: int = int(_env("CV_DATASET_ZIP_MAX_MB", "2048"))
     max_video_frames: int = int(_env("CV_MAX_VIDEO_FRAMES", "0"))  # 0 = no limit
     persist_jobs: bool = _env_bool("CV_PERSIST_JOBS", True)
     job_poll_timeout_sec: float = float(_env("CV_JOB_POLL_TIMEOUT_SEC", "600"))
