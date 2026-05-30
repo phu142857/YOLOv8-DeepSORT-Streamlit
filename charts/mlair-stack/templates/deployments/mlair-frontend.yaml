@@ -1,0 +1,49 @@
+{{- if .Values.mlairFrontend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mlair-stack.serviceName" (dict "service" "mlair-frontend" "Release" .Release "Chart" .Chart "Values" .Values) }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.mlairFrontend.replicas }}
+  selector:
+    matchLabels:
+      {{- include "mlair-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mlair-frontend
+  template:
+    metadata:
+      labels:
+        {{- include "mlair-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mlair-frontend
+    spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mlair-frontend
+          image: {{ include "mlair-stack.mlairCoreImage" (dict "Values" .Values "name" "ml-air-frontend" ) | quote }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: MLAIR_NEXT_INTERNAL_API_URL
+              value: "http://mlair-api:8080"
+            - name: NEXT_PUBLIC_API_BASE_URL
+              value: {{ required "global.publicBaseUrl is required" .Values.global.publicBaseUrl | quote }}
+            - name: NEXT_PUBLIC_MLAIR_REALTIME_WS
+              value: {{ required "global.realtimeWsUrl is required" .Values.global.realtimeWsUrl | quote }}
+          volumeMounts:
+            - name: runtime-config
+              mountPath: /app/public/mlair-runtime-config.js
+              subPath: mlair-runtime-config.js
+              readOnly: true
+          resources:
+            {{- toYaml .Values.mlairFrontend.resources | nindent 12 }}
+      volumes:
+        - name: runtime-config
+          configMap:
+            name: {{ include "mlair-stack.fullname" . }}-runtime-config
+{{- end }}

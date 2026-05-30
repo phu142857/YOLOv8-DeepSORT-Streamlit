@@ -1,0 +1,93 @@
+{{- if .Values.mlairApi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mlair-stack.serviceName" (dict "service" "mlair-api" "Release" .Release "Chart" .Chart "Values" .Values) }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.mlairApi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "mlair-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mlair-api
+  template:
+    metadata:
+      labels:
+        {{- include "mlair-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mlair-api
+    spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mlair-api
+          image: {{ include "mlair-stack.mlairApiImage" . | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -e
+              mkdir -p /mlair/artifacts/models /mlair/artifacts/datasets
+              cd /app && alembic upgrade head
+              exec uvicorn main:app --host 0.0.0.0 --port 8080
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: ML_AIR_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_DATABASE_URL}}
+            - name: ML_AIR_REDIS_URL
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_REDIS_URL}}
+            - name: ML_AIR_JWT_HS256_SECRET
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_JWT_HS256_SECRET}}
+            - name: ML_AIR_AUTH_TOKENS_JSON
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_AUTH_TOKENS_JSON}}
+            - name: ML_AIR_TRACKING_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_TRACKING_TOKEN}}
+            - name: ML_AIR_MANIFEST_SIGNING_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_MANIFEST_SIGNING_KEY}}
+            - name: ML_AIR_MANIFEST_ACTIVE_KEY_ID
+              value: "v1"
+            - name: ML_AIR_DATASET_ARTIFACT_ROOT
+              value: "file:///mlair/artifacts/datasets"
+            - name: ML_AIR_DEFAULT_MODEL_ARTIFACT_ROOT
+              value: "file:///mlair/artifacts/models"
+            - name: ML_AIR_TASK_EXECUTION_MODE
+              value: "external"
+            - name: ML_AIR_TASK_LEASE_SECONDS
+              value: "300"
+            - name: MLAIR_MODEL_PROMOTE_WEBHOOK_URL
+              value: "http://cv-api:8000/api/v1/mlair/promote-webhook"
+            - name: MLAIR_MODEL_PROMOTE_WEBHOOK_BEARER_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_TRACKING_TOKEN}}
+            - name: ML_AIR_HTTP_TASK_ALLOWED_HOSTS
+              value: "cv-api,api,localhost,127.0.0.1"
+            - name: MLAIR_REALTIME_ENABLED
+              value: "true"
+            - name: ML_AIR_RUNTIME_API_BASE_URL
+              value: {{ required "global.publicBaseUrl is required" .Values.global.publicBaseUrl | quote }}
+            - name: ML_AIR_RUNTIME_REALTIME_BASE_URL
+              value: {{ required "global.realtimeWsUrl is required" .Values.global.realtimeWsUrl | quote }}
+          volumeMounts:
+            - name: datasets
+              mountPath: {{ .Values.storage.datasets.mountPath }}
+            - name: models
+              mountPath: {{ .Values.storage.models.mountPath }}
+          livenessProbe:
+            httpGet: {path: /health, port: 8080}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /health, port: 8080}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.mlairApi.resources | nindent 12 }}
+      volumes:
+        - name: datasets
+          persistentVolumeClaim: {claimName: {{ .Values.storage.datasets.pvcName }}}
+        - name: models
+          persistentVolumeClaim: {claimName: {{ .Values.storage.models.pvcName }}}
+{{- end }}

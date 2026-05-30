@@ -1,0 +1,23 @@
+{{- if and .Values.cvTrainWorker.enabled .Values.autoscaling.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "mlair-stack.fullname" . }}-cv-train-worker
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "mlair-stack.serviceName" (dict "service" "cv-train-worker" "Release" .Release "Chart" .Chart "Values" .Values) }}
+  minReplicas: {{ .Values.autoscaling.hpa.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.hpa.targetCPUUtilizationPercentage }}
+{{- end }}
+

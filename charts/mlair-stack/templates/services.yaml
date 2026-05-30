@@ -1,0 +1,84 @@
+{{- if .Values.mlairApi.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlair-api
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "mlair-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mlair-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+{{- end }}
+---
+{{- if .Values.mlairRealtime.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlair-realtime
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "mlair-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mlair-realtime
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001
+{{- end }}
+---
+{{- if .Values.mlairFrontend.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlair-frontend
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "mlair-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mlair-frontend
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+{{- end }}
+---
+{{- if .Values.cvApi.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: cv-api
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "mlair-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: cv-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+{{- end }}
+---
+{{- if .Values.cvUi.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: cv-ui
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "mlair-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: cv-ui
+  ports:
+    - name: http
+      port: 8501
+      targetPort: 8501
+{{- end }}

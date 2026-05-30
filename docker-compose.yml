@@ -192,13 +192,13 @@ services:
       context: .
       dockerfile: Dockerfile
     image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
-    container_name: mlair-cv-train-worker
     command: python scripts/mlair_cv_pipeline_worker.py
     environment:
       PYTHONPATH: /app
       MLAIR_API_BASE_URL: http://api:8080
       MLAIR_WORKER_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
-      MLAIR_WORKER_ID: ${MLAIR_CV_TRAIN_WORKER_ID:-cv-lifecycle-worker}
+      # Leave blank by default so each replica uses its container HOSTNAME.
+      MLAIR_WORKER_ID: ${MLAIR_CV_TRAIN_WORKER_ID:-}
       MLAIR_CAPABILITIES: cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine
       CV_MLAIR_LIFECYCLE_IMPORT_STAGE: ${CV_MLAIR_LIFECYCLE_IMPORT_STAGE:-staging}
       CV_MLAIR_LIFECYCLE_AUTO_PROMOTE: ${CV_MLAIR_LIFECYCLE_AUTO_PROMOTE:-1}

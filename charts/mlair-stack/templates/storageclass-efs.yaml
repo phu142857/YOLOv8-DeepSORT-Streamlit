@@ -1,0 +1,22 @@
+{{- if and .Values.storage.efs.createStorageClass (not .Values.storage.efs.useSharedAccessPoints) }}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.storage.datasets.storageClassName | quote }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+provisioner: efs.csi.aws.com
+parameters:
+  provisioningMode: {{ .Values.storage.efs.provisioningMode | quote }}
+  fileSystemId: {{ required "storage.efs.fileSystemId is required when createStorageClass=true" .Values.storage.efs.fileSystemId | quote }}
+  directoryPerms: {{ .Values.storage.efs.directoryPerms | quote }}
+  encryptInTransit: "true"
+  # Dynamic Access Points; keep uid/gid range broad for non-root appuser.
+  gidRangeStart: "1000"
+  gidRangeEnd: "2000"
+  basePath: "/dynamic_provisioning"
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+{{- end }}
+

@@ -16,7 +16,12 @@ if [[ ! -f "$VAR_FILE" ]]; then
 fi
 
 cd "$TF_DIR"
-terraform "$ACTION" -var-file="$VAR_FILE" -var="environment=$ENV"
+TF_ARGS=(-var-file="$VAR_FILE" -var="environment=$ENV")
+if [[ "$ACTION" == "apply" ]]; then
+  terraform apply -auto-approve "${TF_ARGS[@]}"
+else
+  terraform "$ACTION" "${TF_ARGS[@]}"
+fi
 
 if [[ "$ACTION" == "apply" ]]; then
   echo ""

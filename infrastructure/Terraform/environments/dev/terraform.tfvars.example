@@ -18,3 +18,6 @@ acm_certificate_arn = ""
 allowed_cidr_blocks = ["0.0.0.0/0"]
 
 image_tag = "latest"
+
+# Set by deploy_eks.sh via TF_VAR_enable_eks=true (keep false for ./deploy.sh only)
+enable_eks = false

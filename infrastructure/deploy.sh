@@ -75,5 +75,9 @@ else
 fi
 
 echo ""
-echo "==> Deploy finished. Run: $INFRA/test_workflow.sh $ENV"
-"$INFRA/test_workflow.sh" "$ENV" || true
+if [[ "${SKIP_TEST_WORKFLOW:-0}" == "1" ]]; then
+  echo "==> Deploy finished (SKIP_TEST_WORKFLOW=1 — tests run by caller)."
+else
+  echo "==> Deploy finished. Run: $INFRA/test_workflow.sh $ENV"
+  "$INFRA/test_workflow.sh" "$ENV" || true
+fi

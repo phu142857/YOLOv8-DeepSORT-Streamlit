@@ -44,11 +44,22 @@ def extract_zip_images(zip_path: Path, frames_dir: Path) -> list[Path]:
     idx = 0
 
     with zipfile.ZipFile(zip_path, "r") as zf:
-        for info in zf.infolist():
-            if info.is_dir():
-                continue
-            if not _safe_zip_member(info.filename):
-                continue
+        infos = [i for i in zf.infolist() if (not i.is_dir()) and _safe_zip_member(i.filename)]
+        if not infos:
+            return []
+        if len(infos) > settings.dataset_zip_max_images:
+            raise ValueError(
+                f"ZIP contains {len(infos)} images; max is {settings.dataset_zip_max_images} "
+                "(CV_DATASET_ZIP_MAX_IMAGES)"
+            )
+        total_unzipped = sum(int(i.file_size or 0) for i in infos)
+        limit_bytes = int(settings.dataset_zip_max_unzipped_mb) * 1024 * 1024
+        if total_unzipped > limit_bytes:
+            raise ValueError(
+                f"ZIP expands to ~{total_unzipped / (1024 * 1024):.1f}MB; max is "
+                f"{settings.dataset_zip_max_unzipped_mb}MB (CV_DATASET_ZIP_MAX_UNZIPPED_MB)"
+            )
+        for info in infos:
             suffix = Path(info.filename).suffix.lower()
             if suffix == ".jpeg":
                 suffix = ".jpg"

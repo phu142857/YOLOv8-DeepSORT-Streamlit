@@ -1,0 +1,47 @@
+{{- if .Values.mlairScheduler.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mlair-stack.serviceName" (dict "service" "mlair-scheduler" "Release" .Release "Chart" .Chart "Values" .Values) }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.mlairScheduler.replicas }}
+  selector:
+    matchLabels:
+      {{- include "mlair-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mlair-scheduler
+  template:
+    metadata:
+      labels:
+        {{- include "mlair-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mlair-scheduler
+    spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mlair-scheduler
+          image: {{ include "mlair-stack.mlairCoreImage" (dict "Values" .Values "name" "ml-air-scheduler" ) | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ML_AIR_TASK_EXECUTION_MODE
+              value: "external"
+            - name: ML_AIR_REDIS_URL
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_REDIS_URL}}
+            - name: ML_AIR_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_DATABASE_URL}}
+            - name: ML_AIR_JWT_HS256_SECRET
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_JWT_HS256_SECRET}}
+            - name: ML_AIR_AUTH_TOKENS_JSON
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_AUTH_TOKENS_JSON}}
+            - name: ML_AIR_MANIFEST_SIGNING_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_MANIFEST_SIGNING_KEY}}
+            - name: ML_AIR_MANIFEST_ACTIVE_KEY_ID
+              value: "v1"
+            - name: MLAIR_REALTIME_ENABLED
+              value: "true"
+          resources:
+            {{- toYaml .Values.mlairScheduler.resources | nindent 12 }}
+{{- end }}

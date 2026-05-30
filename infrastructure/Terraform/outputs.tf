@@ -26,6 +26,21 @@ output "efs_id" {
   value = aws_efs_file_system.main.id
 }
 
+output "efs_access_point_models_id" {
+  value       = aws_efs_access_point.mlair_models.id
+  description = "EFS access point for /mlair-models (shared with EC2)"
+}
+
+output "efs_access_point_datasets_id" {
+  value       = aws_efs_access_point.mlair_datasets.id
+  description = "EFS access point for /mlair-datasets (shared with EC2)"
+}
+
+output "efs_access_point_cv_artifacts_id" {
+  value       = aws_efs_access_point.cv_artifacts.id
+  description = "EFS access point for /cv-artifacts (shared with EC2)"
+}
+
 output "ecr_registry_url" {
   value = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
 }

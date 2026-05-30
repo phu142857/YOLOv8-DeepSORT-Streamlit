@@ -1,0 +1,40 @@
+{{- if and .Values.storage.createPvcs (not .Values.storage.efs.useSharedAccessPoints) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.storage.datasets.pvcName }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests:
+      storage: {{ .Values.storage.datasets.size }}
+  storageClassName: {{ .Values.storage.datasets.storageClassName | quote }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.storage.models.pvcName }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests:
+      storage: {{ .Values.storage.models.size }}
+  storageClassName: {{ .Values.storage.models.storageClassName | quote }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.storage.cvArtifacts.pvcName }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests:
+      storage: {{ .Values.storage.cvArtifacts.size }}
+  storageClassName: {{ .Values.storage.cvArtifacts.storageClassName | quote }}
+{{- end }}

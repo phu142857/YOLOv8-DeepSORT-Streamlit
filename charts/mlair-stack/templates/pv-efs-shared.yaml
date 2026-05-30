@@ -1,0 +1,43 @@
+{{- if and .Values.storage.createPvcs .Values.storage.efs.useSharedAccessPoints }}
+{{- $fs := required "storage.efs.fileSystemId required" .Values.storage.efs.fileSystemId }}
+{{- $ns := .Release.Namespace }}
+{{- $pvc := .Values.storage.efs.sharedPvcName | default "efs-shared-root" }}
+# Mount the EFS *file system* (not a per-PVC access point). Subpaths match Terraform AP roots:
+# /mlair-models, /mlair-datasets, /cv-artifacts — same tree as EC2 /mnt/efs/*.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $pvc }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: 100Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef:
+    namespace: {{ $ns }}
+    name: {{ $pvc }}
+  csi:
+    driver: efs.csi.aws.com
+    volumeHandle: {{ $fs | quote }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $pvc }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: {{ $pvc }}
+  resources:
+    requests:
+      storage: 100Gi
+{{- end }}

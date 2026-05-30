@@ -190,15 +190,17 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Optional on EC2 when using EKS workers (deploy_eks.sh). Scale with:
+  #   docker compose ... up -d --scale mlair-cv-train-worker=N
+  # Do not set container_name when scaling.
   mlair-cv-train-worker:
     image: ${ECR_REGISTRY}/${NAME_PREFIX}/cv-lifecycle-workload:${IMAGE_TAG:-latest}
-    container_name: mlair-cv-train-worker
     command: python scripts/mlair_cv_pipeline_worker.py
     environment:
       PYTHONPATH: /app
       MLAIR_API_BASE_URL: http://api:8080
       MLAIR_WORKER_TOKEN: ${ML_AIR_TRACKING_TOKEN}
-      MLAIR_WORKER_ID: cv-lifecycle-worker
+      MLAIR_WORKER_ID: ${MLAIR_CV_TRAIN_WORKER_ID:-}
       MLAIR_CAPABILITIES: cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine
       CV_ARTIFACT_ROOT: /app/artifacts
       CV_MLAIR_API_URL: http://api:8080

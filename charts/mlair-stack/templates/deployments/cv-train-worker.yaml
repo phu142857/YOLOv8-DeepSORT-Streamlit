@@ -1,0 +1,98 @@
+{{- if .Values.cvTrainWorker.enabled }}
+{{- $mlairApiUrl := .Values.global.mlairApiBaseUrl | default "http://mlair-api:8080" }}
+{{- $efsShared := and .Values.storage.createPvcs .Values.storage.efs.useSharedAccessPoints }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mlair-stack.serviceName" (dict "service" "cv-train-worker" "Release" .Release "Chart" .Chart "Values" .Values) }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.cvTrainWorker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "mlair-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: cv-train-worker
+  template:
+    metadata:
+      labels:
+        {{- include "mlair-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: cv-train-worker
+    spec:
+      enableServiceLinks: false
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cv-train-worker
+          image: {{ include "mlair-stack.cvWorkloadImage" . | quote }}
+          imagePullPolicy: IfNotPresent
+          args: ["python","scripts/mlair_cv_pipeline_worker.py"]
+          env:
+            - name: PYTHONPATH
+              value: /app
+            - name: MLAIR_API_BASE_URL
+              value: {{ $mlairApiUrl | quote }}
+            - name: MLAIR_WORKER_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_TRACKING_TOKEN}}
+            {{- if .Values.cvTrainWorker.workerIdFromPodName }}
+            - name: MLAIR_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- end }}
+            - name: MLAIR_CAPABILITIES
+              value: "cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine"
+            - name: CV_ARTIFACT_ROOT
+              value: {{ .Values.storage.cvArtifacts.mountPath | quote }}
+            - name: CV_MLAIR_API_URL
+              value: {{ $mlairApiUrl | quote }}
+            - name: CV_MLAIR_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: CV_MLAIR_TOKEN}}
+            - name: CV_MLAIR_MODEL_ARTIFACT_MOUNT
+              value: "/mlair/artifacts"
+            - name: CV_MLAIR_PERSIST_INGEST_FRAMES
+              value: "0"
+            - name: MLAIR_HEARTBEAT_INTERVAL_SEC
+              value: {{ .Values.cvTrainWorker.heartbeatIntervalSec | quote }}
+            - name: CV_MLAIR_TRAIN_EPOCHS
+              value: {{ .Values.cvTrainWorker.trainEpochs | quote }}
+            - name: CV_DETECTION_MODEL_DIR
+              value: "/mlair/artifacts/models/weights/detection"
+          volumeMounts:
+            {{- if $efsShared }}
+            - name: efs-root
+              mountPath: {{ .Values.storage.cvArtifacts.mountPath }}
+              subPath: cv-artifacts
+            - name: efs-root
+              mountPath: /mlair/artifacts/datasets
+              subPath: mlair-datasets
+            - name: efs-root
+              mountPath: /mlair/artifacts/models
+              subPath: mlair-models
+            {{- else }}
+            - name: cv-artifacts
+              mountPath: {{ .Values.storage.cvArtifacts.mountPath }}
+            - name: datasets
+              mountPath: /mlair/artifacts/datasets
+            - name: models
+              mountPath: /mlair/artifacts/models
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.cvTrainWorker.resources | nindent 12 }}
+      volumes:
+        {{- if $efsShared }}
+        - name: efs-root
+          persistentVolumeClaim:
+            claimName: {{ .Values.storage.efs.sharedPvcName | default "efs-shared-root" }}
+        {{- else }}
+        - name: cv-artifacts
+          persistentVolumeClaim: {claimName: {{ .Values.storage.cvArtifacts.pvcName }}}
+        - name: datasets
+          persistentVolumeClaim: {claimName: {{ .Values.storage.datasets.pvcName }}}
+        - name: models
+          persistentVolumeClaim: {claimName: {{ .Values.storage.models.pvcName }}}
+        {{- end }}
+{{- end }}

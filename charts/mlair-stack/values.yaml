@@ -1,0 +1,157 @@
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+global:
+  # External endpoints (ALB DNS), used for runtime config.
+  publicBaseUrl: ""
+  realtimeWsUrl: ""
+  # EKS workers-only: MLAir API on EC2 private IP (set by eks-deploy-stack.sh).
+  mlairApiBaseUrl: ""
+
+  tenantId: default
+  projectId: default_project
+
+  # Managed services
+  databaseUrl: ""
+  redisUrl: ""
+
+  # Secrets
+  jwtSecret: ""
+  manifestSigningKey: ""
+  trackingToken: ""
+  authTokensJson: ""
+  cvMlairToken: ""
+
+  # Container images
+  ecrRegistry: ""
+  namePrefix: ""
+  imageTag: latest
+  mlairRegistry: ghcr.io/phu142857
+  mlairImageTag: latest
+
+storage:
+  # EFS PVC names (pre-created or created by this chart)
+  createPvcs: true
+  efs:
+    # If true, chart will create a StorageClass for EFS CSI dynamic provisioning.
+    createStorageClass: false
+    # Hybrid AWS: mount same EFS access points as EC2 (not empty dynamic_provisioning dirs).
+    useSharedAccessPoints: false
+    # Single PVC mounting full EFS; pod uses subPath mlair-models|mlair-datasets|cv-artifacts.
+    sharedPvcName: efs-shared-root
+    fileSystemId: ""
+    accessPointIds:
+      models: ""
+      datasets: ""
+      cvArtifacts: ""
+    provisioningMode: efs-ap
+    directoryPerms: "700"
+  datasets:
+    pvcName: mlair-datasets
+    mountPath: /mlair/artifacts/datasets
+    size: 50Gi
+    storageClassName: efs-sc
+  models:
+    pvcName: mlair-models
+    mountPath: /mlair/artifacts/models
+    size: 50Gi
+    storageClassName: efs-sc
+  cvArtifacts:
+    pvcName: cv-artifacts
+    mountPath: /app/artifacts
+    size: 50Gi
+    storageClassName: efs-sc
+
+mlairApi:
+  enabled: true
+  replicas: 1
+  image: "" # default derived from global.ecrRegistry/namePrefix
+  resources: {}
+
+mlairScheduler:
+  enabled: true
+  replicas: 1
+  resources: {}
+
+mlairExecutor:
+  enabled: true
+  replicas: 1
+  resources: {}
+
+mlairRealtime:
+  enabled: true
+  replicas: 1
+  resources: {}
+
+mlairFrontend:
+  enabled: true
+  replicas: 1
+  resources: {}
+
+cvApi:
+  enabled: true
+  replicas: 1
+  resources: {}
+
+cvUi:
+  enabled: true
+  replicas: 1
+  resources: {}
+
+cvTrainWorker:
+  enabled: true
+  # Base replicas; autoscaling can raise this.
+  replicas: 1
+  resources: {}
+  # Lease heartbeats / training params
+  heartbeatIntervalSec: 15
+  trainEpochs: 10
+  # Provide unique worker_id per pod by default.
+  workerIdFromPodName: true
+
+ingress:
+  enabled: true
+  className: alb
+  annotations: {}
+  hosts:
+    - host: ""
+      paths:
+        - path: /
+          service: mlair-frontend
+          port: 3000
+        - path: /v1
+          service: mlair-api
+          port: 8080
+        - path: /health
+          service: mlair-api
+          port: 8080
+        - path: /docs
+          service: mlair-api
+          port: 8080
+        - path: /openapi.json
+          service: mlair-api
+          port: 8080
+        - path: /ws
+          service: mlair-realtime
+          port: 8001
+        - path: /cv-api
+          service: cv-api
+          port: 8000
+        - path: /cv
+          service: cv-ui
+          port: 8501
+
+autoscaling:
+  hpa:
+    enabled: true
+    # minReplicas = guaranteed execution slots; maxReplicas = CPU burst (Phase 2: KEDA on queue).
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 75
+  keda:
+    enabled: false
+    # Placeholder; requires KEDA installation and a scaler choice.
+    minReplicas: 1
+    maxReplicas: 20

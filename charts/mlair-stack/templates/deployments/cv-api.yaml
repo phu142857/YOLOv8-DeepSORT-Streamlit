@@ -1,0 +1,85 @@
+{{- if .Values.cvApi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mlair-stack.serviceName" (dict "service" "cv-api" "Release" .Release "Chart" .Chart "Values" .Values) }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.cvApi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "mlair-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: cv-api
+  template:
+    metadata:
+      labels:
+        {{- include "mlair-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: cv-api
+    spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cv-api
+          image: {{ include "mlair-stack.cvWorkloadImage" . | quote }}
+          imagePullPolicy: IfNotPresent
+          args: ["uvicorn","backend.main:app","--host","0.0.0.0","--port","8000"]
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: PYTHONPATH
+              value: /app
+            - name: CV_ARTIFACT_ROOT
+              value: {{ .Values.storage.cvArtifacts.mountPath | quote }}
+            - name: CV_API_BASE_URL
+              value: "http://cv-api:8000"
+            - name: CV_MLAIR_API_URL
+              value: "http://mlair-api:8080"
+            - name: CV_MLAIR_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: CV_MLAIR_TOKEN}}
+            - name: CV_MLAIR_TENANT
+              value: {{ .Values.global.tenantId | quote }}
+            - name: CV_MLAIR_PROJECT
+              value: {{ .Values.global.projectId | quote }}
+            - name: CV_MLAIR_AUTO_INGEST
+              value: "1"
+            - name: CV_MLAIR_PERSIST_INGEST_FRAMES
+              value: "0"
+            - name: CV_MLAIR_SYNC_AFTER_TRAIN
+              value: "0"
+            - name: CV_MLAIR_HUB_URL
+              value: {{ required "global.publicBaseUrl is required" .Values.global.publicBaseUrl | quote }}
+          volumeMounts:
+            - name: cv-artifacts
+              mountPath: {{ .Values.storage.cvArtifacts.mountPath }}
+            - name: models-weights
+              mountPath: /app/weights
+              subPath: weights
+            - name: models
+              mountPath: /mlair/artifacts/models
+              readOnly: true
+            - name: datasets
+              mountPath: /mlair/artifacts/datasets
+          livenessProbe:
+            httpGet: {path: /health, port: 8000}
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: {path: /health, port: 8000}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.cvApi.resources | nindent 12 }}
+      volumes:
+        - name: cv-artifacts
+          persistentVolumeClaim: {claimName: {{ .Values.storage.cvArtifacts.pvcName }}}
+        - name: datasets
+          persistentVolumeClaim: {claimName: {{ .Values.storage.datasets.pvcName }}}
+        - name: models
+          persistentVolumeClaim: {claimName: {{ .Values.storage.models.pvcName }}}
+        - name: models-weights
+          persistentVolumeClaim: {claimName: {{ .Values.storage.models.pvcName }}}
+{{- end }}

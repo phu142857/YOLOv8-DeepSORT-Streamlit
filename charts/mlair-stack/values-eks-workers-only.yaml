@@ -1,0 +1,31 @@
+# Hybrid EKS profile: autoscale train workers on Kubernetes; Hub/API stay on EC2 (ALB).
+ingress:
+  enabled: false
+
+mlairApi:
+  enabled: false
+mlairScheduler:
+  enabled: false
+mlairExecutor:
+  enabled: false
+mlairRealtime:
+  enabled: false
+mlairFrontend:
+  enabled: false
+cvApi:
+  enabled: false
+cvUi:
+  enabled: false
+
+cvTrainWorker:
+  enabled: true
+  # Baseline concurrency (must match autoscaling.hpa.minReplicas when HPA is on).
+  replicas: 4
+
+autoscaling:
+  hpa:
+    enabled: true
+    # Guaranteed execution slots (concurrency floor) — NOT scaled down by idle CPU.
+    minReplicas: 4
+    # Reactive burst capacity (CPU-based until KEDA queue scaling — Phase 2).
+    maxReplicas: 16

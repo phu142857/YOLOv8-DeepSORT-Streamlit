@@ -1,0 +1,29 @@
+global:
+  publicBaseUrl: "http://example-alb-dns"
+  realtimeWsUrl: "ws://example-alb-dns/ws"
+  tenantId: default
+  projectId: default_project
+
+  # Fill these from Secrets Manager / SSM outputs
+  databaseUrl: ""
+  redisUrl: ""
+  jwtSecret: ""
+  manifestSigningKey: ""
+  trackingToken: ""
+  authTokensJson: ""
+  cvMlairToken: ""
+
+  ecrRegistry: ""
+  namePrefix: ""
+  imageTag: latest
+
+storage:
+  efs:
+    createStorageClass: false
+    fileSystemId: ""
+
+autoscaling:
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 10

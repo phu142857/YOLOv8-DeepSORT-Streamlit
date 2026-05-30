@@ -33,6 +33,7 @@ COPY workers ./workers
 COPY mlair_adapter ./mlair_adapter
 COPY examples ./examples
 COPY scripts ./scripts
+COPY .streamlit ./.streamlit
 
 RUN mkdir -p /app/artifacts /app/weights/detection
 

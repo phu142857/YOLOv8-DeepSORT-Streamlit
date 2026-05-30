@@ -1,0 +1,48 @@
+{{- if .Values.mlairRealtime.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mlair-stack.serviceName" (dict "service" "mlair-realtime" "Release" .Release "Chart" .Chart "Values" .Values) }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.mlairRealtime.replicas }}
+  selector:
+    matchLabels:
+      {{- include "mlair-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mlair-realtime
+  template:
+    metadata:
+      labels:
+        {{- include "mlair-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mlair-realtime
+    spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mlair-realtime
+          image: {{ include "mlair-stack.mlairCoreImage" (dict "Values" .Values "name" "ml-air-realtime" ) | quote }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8001
+          env:
+            - name: ML_AIR_REDIS_URL
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_REDIS_URL}}
+            - name: ML_AIR_JWT_HS256_SECRET
+              valueFrom: {secretKeyRef: {name: {{ include "mlair-stack.fullname" . }}-secrets, key: ML_AIR_JWT_HS256_SECRET}}
+            - name: MLAIR_REALTIME_ENABLED
+              value: "true"
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8001}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8001}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.mlairRealtime.resources | nindent 12 }}
+{{- end }}

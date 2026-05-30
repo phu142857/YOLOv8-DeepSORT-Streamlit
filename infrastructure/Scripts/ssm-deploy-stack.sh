@@ -22,6 +22,10 @@ ECR_REG="$(terraform -chdir="$TF_DIR" output -raw ecr_registry_url)"
 APP_ROOT="/opt/${NAME_PREFIX}"
 SECRETS_ARN="$(terraform -chdir="$TF_DIR" output -raw secrets_manager_arn)"
 MODELS_S3_BUCKET="$(terraform -chdir="$TF_DIR" output -raw models_s3_bucket 2>/dev/null || true)"
+EFS_ID="$(terraform -chdir="$TF_DIR" output -raw efs_id 2>/dev/null || true)"
+EFS_AP_CV="$(terraform -chdir="$TF_DIR" output -raw efs_access_point_cv_artifacts_id 2>/dev/null || true)"
+EFS_AP_MODELS="$(terraform -chdir="$TF_DIR" output -raw efs_access_point_models_id 2>/dev/null || true)"
+EFS_AP_DATASETS="$(terraform -chdir="$TF_DIR" output -raw efs_access_point_datasets_id 2>/dev/null || true)"
 
 command -v aws >/dev/null || { echo "aws CLI required" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
@@ -77,6 +81,9 @@ if [[ -n "${MODELS_S3_BUCKET:-}" ]]; then
   dotenv_set "$ENV_FILE" CV_MODELS_S3_PREFIX "ml-models"
   dotenv_set "$ENV_FILE" CV_MODELS_S3_REGION "$AWS_REGION"
   dotenv_set "$ENV_FILE" CV_DETECTION_BOOTSTRAP_MODELS "yolov8n,yolov8s,yolov8m,yolov8l,yolov8x"
+fi
+if [[ "${CV_USE_EKS_TRAIN_WORKERS:-0}" == "1" ]]; then
+  dotenv_set "$ENV_FILE" CV_USE_EKS_TRAIN_WORKERS "1"
 fi
 if [[ -n "${GHCR_TOKEN:-}" ]]; then
   dotenv_set "$ENV_FILE" GHCR_TOKEN "$GHCR_TOKEN"
@@ -135,10 +142,16 @@ if [[ -n "\$GHCR_TOKEN" ]]; then
   cp -f /root/.docker/config.json /home/ec2-user/.docker/config.json 2>/dev/null || true
   chown -R ec2-user:ec2-user /home/ec2-user/.docker
 fi
+$(ec2_efs_mount_script_snippet "$EFS_ID" "$EFS_AP_CV" "$EFS_AP_MODELS" "$EFS_AP_DATASETS")
 # Prefer standalone compose binary (ec2-user often lacks docker compose plugin)
 COMPOSE=(sudo -u ec2-user "\$COMPOSE_BIN" -f docker-compose.aws.yml)
 "\${COMPOSE[@]}" pull
-"\${COMPOSE[@]}" up -d --remove-orphans
+TRAIN_WORKER_SCALE=1
+if grep -q '^CV_USE_EKS_TRAIN_WORKERS=1' .env 2>/dev/null || grep -q '^CV_USE_EKS_TRAIN_WORKERS="1"' .env 2>/dev/null; then
+  TRAIN_WORKER_SCALE=0
+  echo "EKS train workers enabled — scaling EC2 mlair-cv-train-worker to 0"
+fi
+"\${COMPOSE[@]}" up -d --remove-orphans --scale "mlair-cv-train-worker=\${TRAIN_WORKER_SCALE}"
 echo "Waiting for cv-api..."
 for i in \$(seq 1 36); do
   if curl -sf http://127.0.0.1:8000/health >/dev/null; then echo OK; break; fi

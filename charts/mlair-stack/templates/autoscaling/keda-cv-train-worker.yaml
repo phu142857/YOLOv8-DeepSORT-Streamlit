@@ -1,0 +1,17 @@
+{{- if and .Values.cvTrainWorker.enabled .Values.autoscaling.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "mlair-stack.fullname" . }}-cv-train-worker
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "mlair-stack.serviceName" (dict "service" "cv-train-worker" "Release" .Release "Chart" .Chart "Values" .Values) }}
+  minReplicaCount: {{ .Values.autoscaling.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.keda.maxReplicas }}
+  # NOTE: You must choose and configure triggers for your environment.
+  # Recommended: scale by queue depth (Redis) or MLAir API exposed metric.
+  triggers: []
+{{- end }}
+

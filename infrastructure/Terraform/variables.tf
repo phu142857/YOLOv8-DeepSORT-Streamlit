@@ -97,3 +97,39 @@ variable "image_tag" {
   type    = string
   default = "latest"
 }
+
+variable "enable_eks" {
+  type        = bool
+  description = "If true, provision an EKS cluster for Kubernetes-based deploys."
+  default     = false
+}
+
+variable "eks_cluster_version" {
+  type        = string
+  description = "EKS Kubernetes version"
+  default     = "1.30"
+}
+
+variable "eks_node_instance_types" {
+  type        = list(string)
+  description = "EKS managed node group instance types"
+  default     = ["m7i-flex.large"]
+}
+
+variable "eks_node_desired_size" {
+  type        = number
+  description = "EKS node group desired size"
+  default     = 2
+}
+
+variable "eks_node_min_size" {
+  type        = number
+  description = "EKS node group min size"
+  default     = 1
+}
+
+variable "eks_node_max_size" {
+  type        = number
+  description = "EKS node group max size"
+  default     = 6
+}

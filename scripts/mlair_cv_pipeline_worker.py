@@ -124,7 +124,9 @@ def main() -> None:
     token = (os.getenv("MLAIR_WORKER_TOKEN") or os.getenv("ML_AIR_WORKER_TOKEN") or "").strip()
     if not token:
         raise SystemExit("set MLAIR_WORKER_TOKEN")
-    worker_id = os.getenv("MLAIR_WORKER_ID", "cv-lifecycle-worker").strip()
+    worker_id = (os.getenv("MLAIR_WORKER_ID") or "").strip()
+    if not worker_id:
+        worker_id = (os.getenv("HOSTNAME") or "").strip() or "cv-lifecycle-worker"
     caps = os.getenv("MLAIR_CAPABILITIES", DEFAULT_CAPS)
     capabilities = [c.strip() for c in caps.split(",") if c.strip()]
     lease_url = f"{base}/v1/tasks/lease"

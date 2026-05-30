@@ -1,0 +1,6 @@
+apiVersion: v2
+name: mlair-stack
+description: MLAir + CV lifecycle stack on Kubernetes (EKS-ready)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

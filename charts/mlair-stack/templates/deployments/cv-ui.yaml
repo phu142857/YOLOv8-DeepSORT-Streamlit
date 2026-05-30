@@ -1,0 +1,57 @@
+{{- if .Values.cvUi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mlair-stack.serviceName" (dict "service" "cv-ui" "Release" .Release "Chart" .Chart "Values" .Values) }}
+  labels:
+    {{- include "mlair-stack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.cvUi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "mlair-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: cv-ui
+  template:
+    metadata:
+      labels:
+        {{- include "mlair-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: cv-ui
+    spec:
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cv-ui
+          image: {{ include "mlair-stack.cvWorkloadImage" . | quote }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - streamlit
+            - run
+            - frontend/app.py
+            - --server.port=8501
+            - --server.address=0.0.0.0
+            - --server.baseUrlPath=/cv
+            - --browser.gatherUsageStats=false
+          ports:
+            - name: http
+              containerPort: 8501
+          env:
+            - name: PYTHONPATH
+              value: /app
+            - name: CV_API_BASE_URL
+              value: "http://cv-api:8000"
+            - name: CV_MLAIR_HUB_URL
+              value: {{ required "global.publicBaseUrl is required" .Values.global.publicBaseUrl | quote }}
+            - name: CV_CLIENT_SAVE_TO_DATASET
+              value: "1"
+          volumeMounts:
+            - name: models-weights
+              mountPath: /app/weights
+              subPath: weights
+          resources:
+            {{- toYaml .Values.cvUi.resources | nindent 12 }}
+      volumes:
+        - name: models-weights
+          persistentVolumeClaim: {claimName: {{ .Values.storage.models.pvcName }}}
+{{- end }}

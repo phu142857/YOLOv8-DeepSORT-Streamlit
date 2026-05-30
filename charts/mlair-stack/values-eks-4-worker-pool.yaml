@@ -1,0 +1,14 @@
+# Optional overlay: always 4 cv-train-worker pods (one lease slot per pod, max ~4 parallel runs).
+# Use with values-eks-workers-only.yaml:
+#   helm upgrade ... -f values-eks-workers-only.yaml -f values-eks-4-worker-pool.yaml
+#
+# Or: CV_TRAIN_WORKER_FIXED_POOL=4 ./infrastructure/deploy_eks.sh dev
+ingress:
+  enabled: false
+
+cvTrainWorker:
+  replicas: 4
+
+autoscaling:
+  hpa:
+    enabled: false
