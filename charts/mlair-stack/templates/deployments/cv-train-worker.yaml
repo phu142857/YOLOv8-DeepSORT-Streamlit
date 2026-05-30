@@ -56,6 +56,10 @@ spec:
               value: "0"
             - name: MLAIR_HEARTBEAT_INTERVAL_SEC
               value: {{ .Values.cvTrainWorker.heartbeatIntervalSec | quote }}
+            - name: MLAIR_RESOURCE_MONITOR_ENABLED
+              value: {{ .Values.cvTrainWorker.resourceMonitorEnabled | ternary "1" "0" | quote }}
+            - name: MLAIR_RESOURCE_SAMPLE_INTERVAL_SEC
+              value: {{ .Values.cvTrainWorker.resourceSampleIntervalSec | quote }}
             - name: CV_MLAIR_TRAIN_EPOCHS
               value: {{ .Values.cvTrainWorker.trainEpochs | quote }}
             - name: CV_DETECTION_MODEL_DIR

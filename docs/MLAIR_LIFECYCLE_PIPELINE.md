@@ -94,13 +94,17 @@ PyTorch **2.6+** mặc định `torch.load(..., weights_only=True)` — file `.p
 - Rebuild image worker: `docker compose build cv-lifecycle-workload && docker compose up -d mlair-cv-train-worker`
 - Chạy **run pipeline mới** (task cũ đã `attempt: 3` / FAILED).
 
-## Hub Run details: Logs / Metrics / Artifacts
+## Hub Run details: Logs / Metrics / Artifacts / Resource usage
 
-| Tab | Nguồn | CV worker |
+| Tab | Nguồn | CV worker (external) |
 |-----|--------|-----------|
 | **Logs** | `POST /v1/tasks/{id}/logs` → Redis run log stream | `capture_task_logs` |
 | **Metrics** | `complete_task` → `run_metrics` (`{plugin}.{key}`) | `metrics` trong body `complete` |
 | **Artifacts** | `complete_task` → `run_artifacts` | `artifacts[]` (`train/checkpoint`, `prepare/data.yaml`, …) |
+| **Tasks & resources** (live CPU/RAM) | `heartbeat` → `usage` (~3s) | `ResourceMonitor` sample + heartbeat **3s** |
+| **Task detail → Resource usage** | `complete`/`fail` → `resource_usage` + `usage_samples` | `build_complete_task_body` / `build_fail_task_body` |
+
+Cần `ML_AIR_USAGE_TRACKING_ENABLED=1` trên API (compose AWS đã set). Sau deploy worker mới, chạy **run pipeline mới** — run cũ không có sample.
 
 MLAir (bản mới) persist tracking trong `complete_task` / `fail_task`; Hub poll tracking + `run.tracking.updated`.
 
@@ -150,7 +154,7 @@ Vẫn xem raw: `docker logs -f mlair-cv-train-worker`.
 YOLO train trên CPU có thể **30–60+ phút**. MLAir lease mặc định **30s** — worker **phải heartbeat** (đã thêm trong `mlair_cv_pipeline_worker.py`).
 
 - `ML_AIR_TASK_LEASE_SECONDS=300` trên **api**
-- `MLAIR_HEARTBEAT_INTERVAL_SEC=15` trên worker
+- `MLAIR_HEARTBEAT_INTERVAL_SEC=3` và `MLAIR_RESOURCE_SAMPLE_INTERVAL_SEC=3` trên worker (live + samples mỗi 3s)
 
 Nếu run đang kẹt: **Cancel run** trên Hub → rebuild worker → train lại. Kiểm tra log:
 

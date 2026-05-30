@@ -46,11 +46,23 @@ def artifacts_from_plugin_result(result: dict[str, Any], *, plugin: str) -> list
     return items
 
 
+def _attach_usage_report(body: dict[str, Any], usage_report: dict[str, Any] | None) -> None:
+    if not isinstance(usage_report, dict):
+        return
+    ru = usage_report.get("resource_usage")
+    if isinstance(ru, dict) and ru:
+        body["resource_usage"] = ru
+    samples = usage_report.get("usage_samples")
+    if isinstance(samples, list) and samples:
+        body["usage_samples"] = samples
+
+
 def build_complete_task_body(
     worker_id: str,
     result: dict[str, Any],
     *,
     plugin: str,
+    usage_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "worker_id": worker_id,
@@ -59,4 +71,16 @@ def build_complete_task_body(
     artifacts = artifacts_from_plugin_result(result, plugin=plugin)
     if artifacts:
         body["artifacts"] = artifacts
+    _attach_usage_report(body, usage_report)
+    return body
+
+
+def build_fail_task_body(
+    worker_id: str,
+    error: str,
+    *,
+    usage_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {"worker_id": worker_id, "error": error}
+    _attach_usage_report(body, usage_report)
     return body

@@ -7,14 +7,10 @@ Capabilities: cv_yolo_prepare, cv_yolo_train, cv_yolo_eval, cv_yolo_gate, cv_har
 
 from __future__ import annotations
 
-import json
 import os
 import sys
-import threading
 import time
 import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
@@ -26,10 +22,11 @@ from mlair_adapter.torch_compat import apply_torch_checkpoint_compat
 
 apply_torch_checkpoint_compat()
 
-from mlair_adapter.run_tracking_client import build_complete_task_body
+from mlair_adapter.run_tracking_client import build_complete_task_body, build_fail_task_body
 from mlair_adapter.task_log_client import TaskLogSink
 from mlair_adapter.worker_context import plugin_context_from_lease_task
 from mlair_adapter.worker_log_capture import capture_task_logs
+from mlair_adapter.worker_task_runtime import post_json, run_handler_with_heartbeat, task_url
 from mlair_adapter.yolo_lifecycle import (
     run_eval,
     run_gate,
@@ -61,64 +58,6 @@ def _dispatch_train(ctx: dict[str, Any]) -> dict[str, Any]:
     return run_legacy_monolithic_train(ctx)
 
 
-def _post_json(url: str, token: str, body: dict, *, timeout: float = 7200) -> dict:
-    data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        method="POST",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8")
-        return json.loads(raw) if raw else {}
-
-
-def _task_url(base: str, task_id: str, suffix: str) -> str:
-    tid = urllib.parse.quote(task_id, safe=":")
-    return f"{base}/v1/tasks/{tid}/{suffix}"
-
-
-def _heartbeat_loop(
-    base: str,
-    token: str,
-    worker_id: str,
-    task_id: str,
-    stop: threading.Event,
-) -> None:
-    """Keep lease alive during long YOLO train (ML_AIR_TASK_LEASE_SECONDS default is 30s)."""
-    interval = max(5, int(os.getenv("MLAIR_HEARTBEAT_INTERVAL_SEC", "15")))
-    url = _task_url(base, task_id, "heartbeat")
-    while not stop.wait(interval):
-        try:
-            _post_json(url, token, {"worker_id": worker_id}, timeout=30)
-        except Exception as exc:
-            print(f"heartbeat_error task_id={task_id} err={exc}", flush=True)
-
-
-def _run_handler_with_heartbeat(
-    base: str,
-    token: str,
-    worker_id: str,
-    task_id: str,
-    handler: Callable[[dict[str, Any]], dict[str, Any]],
-    ctx: dict[str, Any],
-) -> dict[str, Any]:
-    stop = threading.Event()
-    hb = threading.Thread(
-        target=_heartbeat_loop,
-        args=(base, token, worker_id, task_id, stop),
-        name=f"heartbeat-{task_id}",
-        daemon=True,
-    )
-    hb.start()
-    try:
-        return handler(ctx)
-    finally:
-        stop.set()
-        hb.join(timeout=5)
-
-
 def main() -> None:
     base = os.getenv("MLAIR_API_BASE_URL", "http://localhost:8080").rstrip("/")
     token = (os.getenv("MLAIR_WORKER_TOKEN") or os.getenv("ML_AIR_WORKER_TOKEN") or "").strip()
@@ -131,13 +70,14 @@ def main() -> None:
     capabilities = [c.strip() for c in caps.split(",") if c.strip()]
     lease_url = f"{base}/v1/tasks/lease"
     print(
-        f"cv lifecycle worker id={worker_id} caps={capabilities} train_checkpoint_resolver=v2",
+        f"cv lifecycle worker id={worker_id} caps={capabilities} "
+        f"usage_monitor=on train_checkpoint_resolver=v2",
         flush=True,
     )
 
     while True:
         try:
-            res = _post_json(
+            res = post_json(
                 lease_url,
                 token,
                 {"worker_id": worker_id, "capabilities": capabilities, "max_tasks": 1},
@@ -163,28 +103,44 @@ def main() -> None:
             print(f"leased task_id={tid} plugin={plugin}", flush=True)
             handler = PLUGIN_HANDLERS.get(plugin)
             if not handler:
-                _post_json(
-                    _task_url(base, tid, "fail"),
+                post_json(
+                    task_url(base, tid, "fail"),
                     token,
-                    {"worker_id": worker_id, "error": f"unsupported_plugin:{plugin}"},
+                    build_fail_task_body(worker_id, f"unsupported_plugin:{plugin}"),
                 )
                 continue
 
+            usage_bundle: dict[str, Any] = {}
             try:
                 ctx = plugin_context_from_lease_task(task)
                 log_sink = TaskLogSink(base, token, worker_id, tid)
+
+                def _run() -> dict[str, Any]:
+                    return handler(ctx)
+
                 with capture_task_logs(log_sink):
-                    result = _run_handler_with_heartbeat(base, token, worker_id, tid, handler, ctx)
-                body = build_complete_task_body(worker_id, result, plugin=plugin)
-                _post_json(_task_url(base, tid, "complete"), token, body)
-                print(f"complete task_id={tid} plugin={plugin} step={result.get('step')}", flush=True)
+                    result, usage_bundle = run_handler_with_heartbeat(
+                        base, token, worker_id, tid, _run
+                    )
+                body = build_complete_task_body(
+                    worker_id, result, plugin=plugin, usage_report=usage_bundle
+                )
+                post_json(task_url(base, tid, "complete"), token, body)
+                ru = usage_bundle.get("resource_usage") or {}
+                n_samples = len(usage_bundle.get("usage_samples") or [])
+                print(
+                    f"complete task_id={tid} plugin={plugin} step={result.get('step')} "
+                    f"usage_samples={n_samples} cpu_percent_peak={ru.get('cpu_percent_peak')} "
+                    f"memory_mb_peak={ru.get('memory_mb_peak')}",
+                    flush=True,
+                )
             except Exception as exc:
                 print(f"fail task_id={tid} plugin={plugin} err={exc}", flush=True)
                 try:
-                    _post_json(
-                        _task_url(base, tid, "fail"),
+                    post_json(
+                        task_url(base, tid, "fail"),
                         token,
-                        {"worker_id": worker_id, "error": str(exc)},
+                        build_fail_task_body(worker_id, str(exc), usage_report=usage_bundle or None),
                     )
                 except Exception:
                     pass

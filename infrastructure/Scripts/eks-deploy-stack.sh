@@ -123,6 +123,8 @@ out = {
     },
     "cvTrainWorker": {
         "replicas": min_rep,
+        "resourceMonitorEnabled": True,
+        "resourceSampleIntervalSec": 3,
         "resources": {
             "requests": {"cpu": "500m", "memory": "1Gi"},
             "limits": {"cpu": "4", "memory": "8Gi"},
