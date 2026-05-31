@@ -30,6 +30,72 @@ class TaskResourceMonitorTest(unittest.TestCase):
     def test_normalize_cpu_tree_percent_contract_v1(self) -> None:
         self.assertAlmostEqual(normalize_cpu_tree_percent(5.6, logical_cpus=8), 5.6)
 
+    def test_gpu_stats_for_pids_uses_pid_memory_delta(self) -> None:
+        from unittest import mock
+
+        from mlair_adapter import task_resource_monitor as trm
+
+        with mock.patch.object(trm, "_nvml_pid_mem_mb", return_value=1680.0):
+            with mock.patch.object(trm, "_nvml_device_used_mb", return_value=1680.0):
+                with mock.patch.object(trm, "_nvml_device_util", return_value=85.0):
+                    util, mem = trm._gpu_stats_for_pids(
+                        {123},
+                        pid_mem_baseline_mb=300.0,
+                        device_mem_baseline_mb=400.0,
+                    )
+        self.assertEqual(util, 85.0)
+        self.assertEqual(mem, 1380.0)
+
+    def test_gpu_stats_for_pids_zero_util_uses_memory_occupancy(self) -> None:
+        from unittest import mock
+
+        from mlair_adapter import task_resource_monitor as trm
+
+        with mock.patch.object(trm, "_nvml_pid_mem_mb", return_value=1680.0):
+            with mock.patch.object(trm, "_nvml_device_used_mb", return_value=1680.0):
+                with mock.patch.object(trm, "_nvml_device_util", return_value=0.0):
+                    with mock.patch.object(trm, "_cuda_total_vram_mb", return_value=3768.0):
+                        with mock.patch.object(trm, "_gpu_util_nvidia_smi", return_value=0.0):
+                            util, mem = trm._gpu_stats_for_pids(
+                                {123},
+                                pid_mem_baseline_mb=300.0,
+                                device_mem_baseline_mb=300.0,
+                            )
+        self.assertEqual(mem, 1380.0)
+        self.assertGreater(util or 0, 0.0)
+
+    def test_gpu_stats_for_pids_below_threshold_returns_none(self) -> None:
+        from unittest import mock
+
+        from mlair_adapter import task_resource_monitor as trm
+
+        with mock.patch.object(trm, "_nvml_pid_mem_mb", return_value=315.0):
+            with mock.patch.object(trm, "_nvml_device_used_mb", return_value=315.0):
+                with mock.patch.object(trm, "_nvml_device_util", return_value=85.0):
+                    util, mem = trm._gpu_stats_for_pids(
+                        {123},
+                        pid_mem_baseline_mb=300.0,
+                        device_mem_baseline_mb=300.0,
+                    )
+        self.assertIsNone(util)
+        self.assertIsNone(mem)
+
+    def test_gpu_stats_for_pids_cuda_context_noise_ignored(self) -> None:
+        from unittest import mock
+
+        from mlair_adapter import task_resource_monitor as trm
+
+        with mock.patch.object(trm, "_nvml_pid_mem_mb", return_value=15.0):
+            with mock.patch.object(trm, "_nvml_device_used_mb", return_value=15.0):
+                with mock.patch.object(trm, "_nvml_device_util", return_value=5.0):
+                    util, mem = trm._gpu_stats_for_pids(
+                        {123},
+                        pid_mem_baseline_mb=0.0,
+                        device_mem_baseline_mb=0.0,
+                    )
+        self.assertIsNone(util)
+        self.assertIsNone(mem)
+
 
 if __name__ == "__main__":
     unittest.main()

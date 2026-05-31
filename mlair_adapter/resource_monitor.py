@@ -70,8 +70,11 @@ class ResourceMonitor:
         }
 
     def latest_heartbeat_usage(self) -> dict[str, Any] | None:
+        sample = self._inner.sample_once()
+        if isinstance(sample, dict):
+            return contract_heartbeat_from_sample(sample)
         report = self._report_or_build()
         samples = report.get("usage_samples") or []
         if samples and isinstance(samples[-1], dict):
             return contract_heartbeat_from_sample(samples[-1])
-        return contract_heartbeat_from_sample(self._inner.sample_once())
+        return None

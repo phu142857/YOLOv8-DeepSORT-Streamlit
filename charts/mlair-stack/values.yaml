@@ -106,10 +106,10 @@ cvTrainWorker:
   replicas: 1
   resources: {}
   # Lease heartbeats / training params
-  heartbeatIntervalSec: 3
+  heartbeatIntervalSec: 1
   trainEpochs: 10
   resourceMonitorEnabled: true
-  resourceSampleIntervalSec: 3
+  resourceSampleIntervalSec: 1
   # Provide unique worker_id per pod by default.
   workerIdFromPodName: true
 

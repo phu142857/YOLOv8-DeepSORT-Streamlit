@@ -13,6 +13,7 @@ services:
       - /dev/nvidia-modeset
     volumes:
       - /usr/lib/libcuda.so.1:/usr/lib/x86_64-linux-gnu/libcuda.so.1:ro
+      - /usr/lib/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
     environment:
       CV_MLAIR_TRAIN_DEVICE: auto
       NVIDIA_VISIBLE_DEVICES: all

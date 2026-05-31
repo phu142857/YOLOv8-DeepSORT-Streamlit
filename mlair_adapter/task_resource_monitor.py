@@ -15,6 +15,9 @@ try:
 except ImportError:  # pragma: no cover
     psutil = None  # type: ignore[assignment]
 
+# Min task VRAM delta (MB) before reporting GPU on Hub (skip idle CUDA context).
+_GPU_REPORT_MIN_MB = float(os.getenv("MLAIR_GPU_REPORT_MIN_MB", "20"))
+
 
 def resource_monitor_enabled() -> bool:
     for key in ("ML_AIR_RESOURCE_MONITOR_ENABLED", "MLAIR_RESOURCE_MONITOR_ENABLED"):
@@ -67,63 +70,195 @@ def _nvml_init_once() -> bool:
             return False
 
 
-def _gpu_stats_nvml(pids: set[int]) -> tuple[float | None, float | None]:
-    if not pids or not _nvml_init_once():
-        return None, None
+def _nvml_device_used_mb(device_index: int = 0) -> float | None:
+    if not _nvml_init_once():
+        return None
     import pynvml  # type: ignore[import-untyped]
 
-    util_peak: float | None = None
-    mem_peak_mb: float | None = None
     try:
-        for idx in range(pynvml.nvmlDeviceGetCount()):
-            handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-            device_util: float | None = None
-            try:
-                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                device_util = float(util.gpu)
-            except Exception:
-                pass
-            matched = False
-            try:
-                for proc in pynvml.nvmlDeviceGetComputeRunningProcesses(handle):
-                    if int(proc.pid) not in pids:
-                        continue
-                    matched = True
-                    used_mb = float(proc.usedGpuMemory) / (1024.0 * 1024.0)
-                    if mem_peak_mb is None or used_mb > mem_peak_mb:
-                        mem_peak_mb = used_mb
-            except Exception:
-                pass
-            if matched and device_util is not None:
-                util_peak = device_util if util_peak is None else max(util_peak, device_util)
-            elif device_util is not None and util_peak is None and mem_peak_mb is not None:
-                util_peak = device_util
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        return round(float(info.used) / (1024.0 * 1024.0), 2)
     except Exception:
+        return None
+
+
+def _nvml_device_util(device_index: int = 0) -> float | None:
+    if not _nvml_init_once():
+        return None
+    import pynvml  # type: ignore[import-untyped]
+
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        return float(util.gpu)
+    except Exception:
+        return None
+
+
+def _host_pids_for_tree(pids: set[int]) -> set[int]:
+    """Map container PIDs to host PIDs (NVML uses host namespace)."""
+    host: set[int] = set()
+    for pid in pids:
+        try:
+            with open(f"/proc/{pid}/status", encoding="utf-8") as fh:
+                for line in fh:
+                    if not line.startswith("NSpid:"):
+                        continue
+                    parts = line.split()
+                    host.add(int(parts[-1]))
+                    break
+        except OSError:
+            host.add(int(pid))
+    return host or pids
+
+
+def _nvml_compute_procs(device_index: int = 0) -> list[tuple[int, float]]:
+    if not _nvml_init_once():
+        return []
+    import pynvml  # type: ignore[import-untyped]
+
+    out: list[tuple[int, float]] = []
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+        for proc in pynvml.nvmlDeviceGetComputeRunningProcesses(handle):
+            out.append((int(proc.pid), float(proc.usedGpuMemory) / (1024.0 * 1024.0)))
+    except Exception:
+        return []
+    return out
+
+
+def _nvml_total_compute_mem_mb(device_index: int = 0) -> float | None:
+    procs = _nvml_compute_procs(device_index)
+    if not procs:
+        return None
+    return round(sum(mb for _, mb in procs), 2)
+
+
+def _nvml_pid_mem_mb(pids: set[int], *, device_index: int = 0) -> float | None:
+    if not pids or not _nvml_init_once():
+        return None
+    host_pids = _host_pids_for_tree(pids)
+    peak: float | None = None
+    for proc_pid, used_mb in _nvml_compute_procs(device_index):
+        if proc_pid not in host_pids:
+            continue
+        peak = used_mb if peak is None else max(peak, used_mb)
+    return round(peak, 2) if peak is not None else None
+
+
+def _gpu_util_nvidia_smi(device_index: int = 0) -> float | None:
+    import shutil
+    import subprocess
+
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return None
+    try:
+        out = subprocess.check_output(
+            [
+                smi,
+                "--query-gpu=utilization.gpu",
+                "--format=csv,noheader,nounits",
+                f"--id={device_index}",
+            ],
+            timeout=2,
+            text=True,
+        )
+        line = out.strip().splitlines()[0].strip()
+        return float(line) if line else None
+    except Exception:
+        return None
+
+
+def _cuda_total_vram_mb() -> float | None:
+    if not _nvml_init_once():
+        return None
+    try:
+        import pynvml  # type: ignore[import-untyped]
+
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        return float(info.total) / (1024.0 * 1024.0)
+    except Exception:
+        return None
+
+
+def _gpu_util_from_memory_mb(mem_mb: float) -> float | None:
+    total_mb = _cuda_total_vram_mb()
+    if total_mb is None or total_mb <= 0 or mem_mb <= 0:
+        return None
+    return min(100.0, round((float(mem_mb) / total_mb) * 100.0, 1))
+
+
+def _resolve_gpu_util(nvml_util: float | None, mem_mb: float) -> float | None:
+    util = nvml_util
+    if util is None or float(util) <= 0:
+        util = _gpu_util_nvidia_smi()
+    if util is None or float(util) <= 0:
+        util = _gpu_util_from_memory_mb(mem_mb)
+    if util is None:
+        return None
+    return round(float(util), 2)
+
+
+def _gpu_stats_for_pids(
+    pids: set[int],
+    *,
+    pid_mem_baseline_mb: float = 0.0,
+    device_mem_baseline_mb: float = 0.0,
+    compute_mem_baseline_mb: float = 0.0,
+) -> tuple[float | None, float | None]:
+    """NVML-only GPU stats (safe from monitor background thread)."""
+    pid_mem = _nvml_pid_mem_mb(pids)
+    device_used = _nvml_device_used_mb(0)
+    compute_total = _nvml_total_compute_mem_mb(0)
+    util = _nvml_device_util(0)
+
+    pid_delta = max(0.0, float(pid_mem or 0.0) - float(pid_mem_baseline_mb))
+    device_delta = max(0.0, float(device_used or 0.0) - float(device_mem_baseline_mb))
+    compute_delta = max(0.0, float(compute_total or 0.0) - float(compute_mem_baseline_mb))
+    mem = max(pid_delta, device_delta, compute_delta)
+
+    if mem < _GPU_REPORT_MIN_MB:
         return None, None
-    return util_peak, mem_peak_mb
+    return _resolve_gpu_util(util, mem), round(mem, 2)
 
 
-def _gpu_stats_torch() -> tuple[float | None, float | None]:
+def _cuda_memory_allocated_mb() -> float | None:
     try:
         import torch
-    except ImportError:
-        return None, None
-    if not torch.cuda.is_available():
-        return None, None
-    try:
-        mem_bytes = max(int(torch.cuda.memory_allocated()), int(torch.cuda.max_memory_allocated()))
-        mem_mb = round(mem_bytes / (1024.0 * 1024.0), 2) if mem_bytes > 0 else None
-        return None, mem_mb
+
+        if torch.cuda.is_available():
+            return round(float(torch.cuda.memory_allocated()) / (1024.0 * 1024.0), 2)
     except Exception:
-        return None, None
+        pass
+    return None
 
 
-def _gpu_stats_for_pids(pids: set[int]) -> tuple[float | None, float | None]:
-    util, mem = _gpu_stats_nvml(pids)
-    if util is not None or mem is not None:
-        return util, mem
-    t_util, t_mem = _gpu_stats_torch()
-    return t_util if util is None else util, t_mem if mem is None else mem
+def _cuda_max_memory_allocated_mb() -> float | None:
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            return round(float(torch.cuda.max_memory_allocated()) / (1024.0 * 1024.0), 2)
+    except Exception:
+        pass
+    return None
+
+
+def _sync_cuda_baseline() -> None:
+    """Main thread: reset CUDA cache before task baseline (best-effort)."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+    except Exception:
+        pass
 
 
 class TaskResourceMonitor:
@@ -151,6 +286,12 @@ class TaskResourceMonitor:
         self._last_sample_cpu: float | None = None
         self._gpu_seconds_acc = 0.0
         self._gpu_mem_mb_seconds_acc = 0.0
+        self._mem_rss_baseline_bytes = 0
+        self._gpu_pid_mem_baseline_mb = 0.0
+        self._gpu_device_mem_baseline_mb = 0.0
+        self._gpu_compute_mem_baseline_mb = 0.0
+        self._cuda_alloc_baseline_mb = 0.0
+        self._cuda_peak_seen_mb = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -176,12 +317,25 @@ class TaskResourceMonitor:
     def attach_pid(self, pid: int) -> None:
         if psutil is None or not resource_monitor_enabled():
             return
-        self._root_pid = int(pid)
+        pid = int(pid)
+        _sync_cuda_baseline()
+        pids = {p.pid for p in self._process_tree(pid)}
+        self._root_pid = pid
         self._started_at = time.perf_counter()
-        self._cpu_times0 = self._cpu_time_seconds_tree(self._root_pid)
-        self._disk_io0 = self._disk_io_tree(self._root_pid)
+        self._mem_rss_baseline_bytes = self._memory_rss_bytes_tree(pid)
+        self._gpu_pid_mem_baseline_mb = float(_nvml_pid_mem_mb(pids) or 0.0)
+        self._gpu_device_mem_baseline_mb = float(_nvml_device_used_mb(0) or 0.0)
+        self._gpu_compute_mem_baseline_mb = float(_nvml_total_compute_mem_mb(0) or 0.0)
+        self._cuda_alloc_baseline_mb = float(_cuda_memory_allocated_mb() or 0.0)
+        self._cpu_times0 = self._cpu_time_seconds_tree(pid)
+        self._disk_io0 = self._disk_io_tree(pid)
         self._last_sample_wall = self._started_at
         self._last_sample_cpu = self._cpu_times0
+        with self._lock:
+            self._samples.clear()
+            self._gpu_seconds_acc = 0.0
+            self._gpu_mem_mb_seconds_acc = 0.0
+            self._cuda_peak_seen_mb = 0.0
 
     def stop(self) -> dict[str, Any]:
         return self.build_report()
@@ -191,25 +345,93 @@ class TaskResourceMonitor:
             return None
         procs = self._process_tree(self._root_pid)
         pids = {p.pid for p in procs}
-        mem_bytes = self._memory_rss_bytes_tree(self._root_pid)
-        gpu_util, gpu_mem_mb = _gpu_stats_for_pids(pids)
+        mem_bytes = max(0, self._memory_rss_bytes_tree(self._root_pid) - self._mem_rss_baseline_bytes)
+        gpu_util, nvml_mem = _gpu_stats_for_pids(
+            pids,
+            pid_mem_baseline_mb=self._gpu_pid_mem_baseline_mb,
+            device_mem_baseline_mb=self._gpu_device_mem_baseline_mb,
+            compute_mem_baseline_mb=self._gpu_compute_mem_baseline_mb,
+        )
+        cuda_mem = self._cuda_peak_delta_mb(apply_threshold=False)
+        gpu_mem_mb: float | None = None
+        gpu_util_out: float | None = gpu_util
+        mem_candidates = [
+            float(x)
+            for x in (nvml_mem, cuda_mem)
+            if x is not None and float(x) >= _GPU_REPORT_MIN_MB
+        ]
+        if mem_candidates:
+            gpu_mem_mb = round(max(mem_candidates), 2)
+            if gpu_util_out is None or float(gpu_util_out) <= 0:
+                gpu_util_out = _resolve_gpu_util(None, gpu_mem_mb)
+        else:
+            gpu_util_out, gpu_mem_mb = None, None
+        if gpu_mem_mb is not None and float(gpu_mem_mb) > self._cuda_peak_seen_mb:
+            self._cuda_peak_seen_mb = float(gpu_mem_mb)
+        elif cuda_mem is not None and float(cuda_mem) > self._cuda_peak_seen_mb:
+            self._cuda_peak_seen_mb = float(cuda_mem)
         with self._lock:
             cpu_pct = self._cpu_percent_since_last_tree_locked(self._root_pid)
             sample = {
                 "sampled_at": _iso_now(),
                 "cpu_percent": cpu_pct,
                 "memory_mb": round(mem_bytes / (1024.0 * 1024.0), 2) if mem_bytes > 0 else 0.0,
-                "gpu_util_percent": gpu_util,
+                "gpu_util_percent": gpu_util_out,
                 "gpu_memory_mb": gpu_mem_mb,
             }
             self._samples.append(sample)
-            if gpu_util is not None and float(gpu_util) > 0:
+            if gpu_util_out is not None and float(gpu_util_out) > 0:
+                self._gpu_seconds_acc += self.interval_seconds
+            elif gpu_mem_mb is not None and float(gpu_mem_mb) >= _GPU_REPORT_MIN_MB:
                 self._gpu_seconds_acc += self.interval_seconds
             if gpu_mem_mb is not None:
                 self._gpu_mem_mb_seconds_acc += float(gpu_mem_mb) * self.interval_seconds
         return sample
 
+    def _cuda_peak_delta_mb(self, *, apply_threshold: bool = True) -> float | None:
+        peak = _cuda_max_memory_allocated_mb()
+        if peak is None:
+            return None
+        delta = max(0.0, float(peak) - float(self._cuda_alloc_baseline_mb))
+        if apply_threshold and delta < _GPU_REPORT_MIN_MB:
+            return None
+        return round(delta, 2)
+
+    def _merge_cuda_peak_sample(self) -> None:
+        cuda_mb = self._cuda_peak_delta_mb(apply_threshold=False)
+        if self._cuda_peak_seen_mb > 0:
+            cuda_mb = max(float(cuda_mb or 0.0), float(self._cuda_peak_seen_mb))
+        if cuda_mb < _GPU_REPORT_MIN_MB:
+            return
+        cuda_mb = round(float(cuda_mb), 2)
+        util = _resolve_gpu_util(_nvml_device_util(0), cuda_mb)
+        with self._lock:
+            if self._samples and isinstance(self._samples[-1], dict):
+                last = self._samples[-1]
+                last["gpu_memory_mb"] = max(float(last.get("gpu_memory_mb") or 0), cuda_mb)
+                if util is not None:
+                    last["gpu_util_percent"] = max(
+                        float(last.get("gpu_util_percent") or 0),
+                        float(util),
+                    )
+            else:
+                self._samples.append(
+                    {
+                        "sampled_at": _iso_now(),
+                        "cpu_percent": 0.0,
+                        "memory_mb": 0.0,
+                        "gpu_util_percent": util,
+                        "gpu_memory_mb": cuda_mb,
+                    }
+                )
+            if util is not None and float(util) > 0:
+                self._gpu_seconds_acc += self.interval_seconds
+            self._gpu_mem_mb_seconds_acc += float(cuda_mb) * self.interval_seconds
+
     def build_report(self) -> dict[str, Any]:
+        if not self._stop.is_set():
+            self.sample_once()
+        self._merge_cuda_peak_sample()
         self._stop.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=self.interval_seconds + 3.0)
@@ -239,7 +461,7 @@ class TaskResourceMonitor:
             peak_mb = max(float(s["memory_mb"]) for s in samples if s.get("memory_mb") is not None)
             memory_rss_kb = int(peak_mb * 1024)
         elif self._root_pid is not None and psutil is not None:
-            rss = self._memory_rss_bytes_tree(self._root_pid)
+            rss = max(0, self._memory_rss_bytes_tree(self._root_pid) - self._mem_rss_baseline_bytes)
             if rss > 0:
                 memory_rss_kb = int(rss / 1024)
 

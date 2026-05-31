@@ -18,6 +18,7 @@ from mlair_adapter.model_client import ModelClient
 from mlair_adapter.model_sync import ModelSyncService
 from mlair_adapter.run_workspace import load_state, require_keys, save_state, workspace_dir
 from mlair_adapter.train_device import resolve_train_device
+from mlair_adapter.worker_task_runtime import capture_active_monitor_sample
 from mlair_adapter.yolo_train_pipeline import (
     _build_yolo_dataset,
     _metrics_from_train_results,
@@ -174,7 +175,10 @@ def run_eval(context: dict[str, Any]) -> dict[str, Any]:
 
     ckpt = Path(str(state["checkpoint"]))
     data_yaml = str(state["data_yaml"])
-    metrics = YOLO(str(ckpt)).val(data=data_yaml, verbose=False)
+    eval_device = resolve_train_device(batch=settings.mlair_train_batch)
+    logger.info("lifecycle eval device=%s", eval_device)
+    metrics = YOLO(str(ckpt)).val(data=data_yaml, device=eval_device, verbose=False)
+    capture_active_monitor_sample()
     map50 = _extract_map50(metrics)
     eval_out = {
         "mAP50": map50,
@@ -209,7 +213,10 @@ def run_gate(context: dict[str, Any]) -> dict[str, Any]:
         candidate_map = eval_res.get("mAP50")
 
     prod_weights = _resolve_base_weights({**context, "model_id": model_id})
-    prod_metrics = YOLO(str(prod_weights)).val(data=data_yaml, verbose=False)
+    gate_device = resolve_train_device(batch=settings.mlair_train_batch)
+    logger.info("lifecycle gate eval device=%s", gate_device)
+    prod_metrics = YOLO(str(prod_weights)).val(data=data_yaml, device=gate_device, verbose=False)
+    capture_active_monitor_sample()
     prod_map = _extract_map50(prod_metrics)
 
     min_delta = settings.mlair_gate_min_map_delta

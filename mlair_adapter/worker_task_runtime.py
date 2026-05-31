@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import os
 import threading
 import time
@@ -13,6 +14,18 @@ from typing import Any, Callable
 from mlair_adapter.resource_monitor import ResourceMonitor
 from mlair_adapter.task_resource_monitor import default_sample_interval_seconds
 
+_active_monitor: contextvars.ContextVar[ResourceMonitor | None] = contextvars.ContextVar(
+    "_active_monitor",
+    default=None,
+)
+
+
+def capture_active_monitor_sample() -> None:
+    """Sample resource usage from the in-flight task monitor (e.g. right after GPU val)."""
+    monitor = _active_monitor.get()
+    if monitor is not None:
+        monitor._inner.sample_once()
+
 
 def _heartbeat_interval_sec() -> float:
     raw = (
@@ -21,7 +34,7 @@ def _heartbeat_interval_sec() -> float:
         or "3"
     ).strip()
     try:
-        return max(3.0, float(raw))
+        return max(1.0, float(raw))
     except ValueError:
         return 3.0
 
@@ -48,7 +61,7 @@ def task_url(base: str, task_id: str, suffix: str) -> str:
 
 def _heartbeat_loop(
     base: str,
-    token: str,
+    auth_token: str,
     worker_id: str,
     task_id: str,
     stop: threading.Event,
@@ -56,16 +69,18 @@ def _heartbeat_loop(
 ) -> None:
     interval = _heartbeat_interval_sec()
     url = task_url(base, task_id, "heartbeat")
-    while not stop.wait(interval):
+    while True:
         try:
             body: dict[str, Any] = {"worker_id": worker_id}
             if monitor is not None:
                 usage = monitor.latest_heartbeat_usage()
                 if usage:
                     body["usage"] = usage
-            post_json(url, token, body, timeout=30)
+            post_json(url, auth_token, body, timeout=30)
         except Exception as exc:
             print(f"heartbeat_error task_id={task_id} err={exc}", flush=True)
+        if stop.wait(interval):
+            break
 
 
 def run_handler_with_heartbeat(
@@ -83,24 +98,29 @@ def run_handler_with_heartbeat(
         flush_interval_seconds=0,
         interval_seconds=sample_iv,
     )
-    with monitor:
-        hb = threading.Thread(
-            target=_heartbeat_loop,
-            args=(base, token, worker_id, task_id, stop, monitor),
-            name=f"heartbeat-{task_id}",
-            daemon=True,
-        )
-        hb.start()
-        exc_to_raise: BaseException | None = None
-        result: dict[str, Any] = {}
-        try:
-            result = handler()
-        except BaseException as exc:
-            exc_to_raise = exc
-        finally:
-            stop.set()
-            hb.join(timeout=max(_heartbeat_interval_sec() + 2.0, 5.0))
-    bundle = monitor.complete_bundle()
-    if exc_to_raise is not None:
-        raise exc_to_raise
-    return result, bundle
+    monitor_ctx = _active_monitor.set(monitor)
+    try:
+        with monitor:
+            hb = threading.Thread(
+                target=_heartbeat_loop,
+                args=(base, token, worker_id, task_id, stop, monitor),
+                name=f"heartbeat-{task_id}",
+                daemon=True,
+            )
+            hb.start()
+            exc_to_raise: BaseException | None = None
+            result: dict[str, Any] = {}
+            try:
+                result = handler()
+            except BaseException as exc:
+                exc_to_raise = exc
+            finally:
+                capture_active_monitor_sample()
+                stop.set()
+                hb.join(timeout=max(_heartbeat_interval_sec() + 2.0, 5.0))
+        bundle = monitor.complete_bundle()
+        if exc_to_raise is not None:
+            raise exc_to_raise
+        return result, bundle
+    finally:
+        _active_monitor.reset(monitor_ctx)

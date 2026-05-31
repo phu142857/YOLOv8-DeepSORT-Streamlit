@@ -131,7 +131,9 @@ def main() -> None:
                 print(
                     f"complete task_id={tid} plugin={plugin} step={result.get('step')} "
                     f"usage_samples={n_samples} cpu_percent_peak={ru.get('cpu_percent_peak')} "
-                    f"memory_mb_peak={ru.get('memory_mb_peak')}",
+                    f"memory_mb_peak={ru.get('memory_mb_peak')} "
+                    f"gpu_percent_peak={ru.get('gpu_percent_peak')} "
+                    f"gpu_memory_mb_peak={ru.get('gpu_memory_mb_peak')}",
                     flush=True,
                 )
             except Exception as exc:
