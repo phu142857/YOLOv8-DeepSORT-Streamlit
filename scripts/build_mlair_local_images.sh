@@ -37,14 +37,14 @@ export MLAIR_API_IMAGE=ml-air-api:local
 
 cd "$ROOT"
 echo "==> ml-air-api:cv-workload (CV plugins on ml-air-api:local)"
-docker compose build api
+./scripts/compose build api
 
-echo "==> cv-lifecycle-workload (cv-api + train worker)"
-docker compose build cv-api mlair-cv-train-worker
+echo "==> cv-lifecycle-workload (cv-api CPU + train worker GPU)"
+./scripts/compose build cv-api mlair-cv-train-worker
 
 echo ""
 echo "Done. Recreate MLAir + CV worker:"
-echo "  docker compose up -d --force-recreate api scheduler executor realtime frontend mlair-cv-train-worker"
+echo "  ./scripts/compose up -d --force-recreate api scheduler executor realtime frontend mlair-cv-train-worker"
 echo ""
 echo "Verify tracking persist in running API:"
 echo "  docker exec ml-air-api python -c \"from app.domains.orchestration import worker_task_service as w; print('tracking_ok', hasattr(w,'_persist_run_plugin_tracking'))\""

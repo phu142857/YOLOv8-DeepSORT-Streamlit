@@ -19,10 +19,15 @@ COPY requirements.txt ./
 COPY ultralytics ./ultralytics
 COPY config.py utils.py app.py ./
 
-# PyTorch CPU first, then app deps. Skip `pip install -e .` — setup.py needs pkg_resources
-# in an isolated PEP517 env; PYTHONPATH=/app is enough for `import ultralytics`.
-RUN pip install --upgrade pip setuptools wheel \
-    && pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu \
+# PyTorch: default CPU wheels; PYTORCH_WHEEL=cu124 for local NVIDIA GPU train.
+ARG PYTORCH_WHEEL=cpu
+RUN pip install --upgrade pip wheel \
+    && pip install 'setuptools>=69.0.0,<81' \
+    && if [ "$PYTORCH_WHEEL" = "cpu" ]; then \
+         pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu; \
+       else \
+         pip install torch torchvision --index-url https://download.pytorch.org/whl/${PYTORCH_WHEEL}; \
+       fi \
     && pip install -r requirements.txt
 
 COPY backend ./backend

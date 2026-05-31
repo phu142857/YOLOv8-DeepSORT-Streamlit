@@ -1,0 +1,18 @@
+# GPU runtime for mlair-cv-train-worker (auto-included from compose.yaml).
+# Image/build (cv-lifecycle-workload:gpu + cu124) live in docker-compose.yml — not duplicated here.
+#
+# Podman: nvidia-container-toolkit optional; explicit devices + libcuda mount below.
+
+services:
+  mlair-cv-train-worker:
+    gpus: all
+    devices:
+      - /dev/nvidia0
+      - /dev/nvidiactl
+      - /dev/nvidia-uvm
+      - /dev/nvidia-modeset
+    volumes:
+      - /usr/lib/libcuda.so.1:/usr/lib/x86_64-linux-gnu/libcuda.so.1:ro
+    environment:
+      CV_MLAIR_TRAIN_DEVICE: auto
+      NVIDIA_VISIBLE_DEVICES: all

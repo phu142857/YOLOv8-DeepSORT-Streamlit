@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Compose wrapper: honors .env, auto-includes GPU overlay unless CV_GPU_TRAIN=0.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
+if [[ -n "${COMPOSE_FILE:-}" ]]; then
+  exec docker compose "$@"
+fi
+
+gpu_train="${CV_GPU_TRAIN:-auto}"
+want_gpu=0
+case "$gpu_train" in
+  1|true|yes) want_gpu=1 ;;
+  0|false|no) want_gpu=0 ;;
+  auto)
+    if nvidia-smi &>/dev/null; then
+      want_gpu=1
+    fi
+    ;;
+  *)
+    echo "WARN: unknown CV_GPU_TRAIN=$gpu_train (use auto|1|0)" >&2
+    ;;
+esac
+
+files=(docker-compose.yml)
+if [[ "$want_gpu" == "1" ]]; then
+  files+=(docker-compose.gpu.yml)
+fi
+
+export COMPOSE_FILE
+COMPOSE_FILE=$(IFS=:; echo "${files[*]}")
+exec docker compose "$@"

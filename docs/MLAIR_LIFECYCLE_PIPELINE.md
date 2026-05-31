@@ -94,6 +94,32 @@ PyTorch **2.6+** mặc định `torch.load(..., weights_only=True)` — file `.p
 - Rebuild image worker: `docker compose build cv-lifecycle-workload && docker compose up -d mlair-cv-train-worker`
 - Chạy **run pipeline mới** (task cũ đã `attempt: 3` / FAILED).
 
+## Train device: GPU ưu tiên, fallback CPU
+
+`CV_MLAIR_TRAIN_DEVICE=auto` (mặc định): CUDA GPU 0 nếu PyTorch thấy GPU, không thì **cpu** (hành vi cũ).
+
+Log worker khi train:
+
+```text
+lifecycle train device=0
+# hoặc
+YOLO train device=cpu
+```
+
+**Local NVIDIA (ví dụ 3050 Ti):** mặc định `compose.yaml` gộp GPU worker (`cv-lifecycle-workload:gpu`, `cu124`). Chỉ cần:
+
+```bash
+docker compose build mlair-cv-train-worker
+docker compose up -d mlair-cv-train-worker
+./scripts/verify_gpu_worker.sh
+```
+
+Podman: không bắt buộc NVIDIA Container Toolkit — compose mount `/dev/nvidia*` + `libcuda.so.1`. EKS/AWS dùng `docker-compose.aws.yml` (CPU). Máy không có GPU: `CV_GPU_TRAIN=0 COMPOSE_FILE=docker-compose.yml` trong `.env`.
+
+Ghi đè: `CV_MLAIR_TRAIN_DEVICE=cpu` hoặc `0` / `cuda:0`.
+
+**GPU trên Hub:** worker cần `nvidia-ml-py` (trong `requirements.txt`) + stack local mặc định GPU (`compose.yaml`). Rebuild image rồi chạy run mới — cột GPU `—` nếu thiếu NVML hoặc train trên CPU.
+
 ## Hub Run details: Logs / Metrics / Artifacts / Resource usage
 
 | Tab | Nguồn | CV worker (external) |

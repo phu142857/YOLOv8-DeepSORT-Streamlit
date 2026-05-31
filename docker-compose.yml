@@ -4,6 +4,9 @@
 #   cd YOLOv8-DeepSORT-Streamlit && ./scripts/build_mlair_local_images.sh   # or only: compose build api
 #   cp .env.docker.example .env && docker compose up -d
 #
+# Train worker uses cv-lifecycle-workload:gpu (cu124) by default via compose.yaml.
+# cv-api / cv-ui stay on CV_IMAGE (CPU). CPU-only host: COMPOSE_FILE=docker-compose.yml CV_GPU_TRAIN=0
+#
 # GHCR instead: set MLAIR_*_IMAGE or MLAIR_REGISTRY + MLAIR_TAG in .env (see .env.docker.example).
 
 name: cv-mlair-stack
@@ -187,11 +190,14 @@ services:
     restart: unless-stopped
 
   # Leases cv_yolo_train plugin tasks (Hub Train requires tasks[].plugin in pipeline config).
+  # Separate image tag from cv-api (CPU). GPU devices/libcuda: docker-compose.gpu.yml via compose.yaml.
   mlair-cv-train-worker:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
+      args:
+        PYTORCH_WHEEL: ${CV_WORKER_PYTORCH_WHEEL:-cu124}
+    image: ${CV_WORKER_IMAGE:-cv-lifecycle-workload:gpu}
     command: python scripts/mlair_cv_pipeline_worker.py
     environment:
       PYTHONPATH: /app
@@ -209,6 +215,7 @@ services:
       MLAIR_HEARTBEAT_INTERVAL_SEC: ${MLAIR_HEARTBEAT_INTERVAL_SEC:-3}
       MLAIR_RESOURCE_MONITOR_ENABLED: ${MLAIR_RESOURCE_MONITOR_ENABLED:-1}
       MLAIR_RESOURCE_SAMPLE_INTERVAL_SEC: ${MLAIR_RESOURCE_SAMPLE_INTERVAL_SEC:-3}
+      CV_MLAIR_TRAIN_DEVICE: ${CV_MLAIR_TRAIN_DEVICE:-auto}
       CV_MLAIR_TRAIN_EPOCHS: ${CV_MLAIR_TRAIN_EPOCHS:-10}
       CV_ARTIFACT_ROOT: /app/artifacts
       CV_API_BASE_URL: http://cv-api:8000
@@ -254,6 +261,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        PYTORCH_WHEEL: ${PYTORCH_WHEEL:-cpu}
     image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
     container_name: cv-lifecycle-api
     command: uvicorn backend.main:app --host 0.0.0.0 --port 8000

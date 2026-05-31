@@ -8,17 +8,17 @@ if [[ ! -f .env ]]; then
 fi
 
 echo "Pulling MLAir images (${MLAIR_REGISTRY:-ghcr.io/phu142857}/ml-air-*:${MLAIR_TAG:-latest})..."
-docker compose pull api scheduler executor frontend realtime postgres redis
+./scripts/compose pull api scheduler executor frontend realtime postgres redis
 
 echo "Building CV workload image (first run may take several minutes)..."
-docker compose build cv-api
+./scripts/compose build cv-api mlair-cv-train-worker
 
 echo "Fixing MLAir artifact volume ownership (import .pt → model versions)..."
-docker compose rm -f mlair-artifact-init 2>/dev/null || true
-docker compose run --rm mlair-artifact-init 2>/dev/null || docker compose up -d mlair-artifact-init
+./scripts/compose rm -f mlair-artifact-init 2>/dev/null || true
+./scripts/compose run --rm mlair-artifact-init 2>/dev/null || ./scripts/compose up -d mlair-artifact-init
 
 echo "Starting stack..."
-docker compose up -d "$@"
+./scripts/compose up -d "$@"
 
 if [[ "${CV_SKIP_POST_BOOTSTRAP:-0}" != "1" ]]; then
   echo ""

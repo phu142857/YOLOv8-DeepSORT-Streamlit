@@ -17,6 +17,7 @@ from mlair_adapter.dataset_client import DatasetClient
 from mlair_adapter.model_client import ModelClient
 from mlair_adapter.model_sync import ModelSyncService
 from mlair_adapter.run_workspace import load_state, require_keys, save_state, workspace_dir
+from mlair_adapter.train_device import resolve_train_device
 from mlair_adapter.yolo_train_pipeline import (
     _build_yolo_dataset,
     _metrics_from_train_results,
@@ -121,11 +122,14 @@ def run_train_step(context: dict[str, Any]) -> dict[str, Any]:
 
     logger.info("lifecycle train run_id=%s model=%s version=%s", run_id, model_id, version_id)
     model = YOLO(str(base_weights))
+    train_device = resolve_train_device(batch=settings.mlair_train_batch)
+    logger.info("lifecycle train device=%s", train_device)
     results = model.train(
         data=str(data_yaml),
         epochs=settings.mlair_train_epochs,
         imgsz=settings.mlair_train_imgsz,
         batch=settings.mlair_train_batch,
+        device=train_device,
         project=str(work_dir / "runs"),
         name="train",
         exist_ok=True,

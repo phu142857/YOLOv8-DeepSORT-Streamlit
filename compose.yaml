@@ -1,0 +1,11 @@
+# Default Compose entry point — `docker compose` loads this file automatically.
+# Merges GPU device mounts for mlair-cv-train-worker (cv-api stays on CPU image).
+#
+# CPU-only host (no NVIDIA):
+#   COMPOSE_FILE=docker-compose.yml CV_GPU_TRAIN=0 CV_WORKER_IMAGE=cv-lifecycle-workload:latest CV_WORKER_PYTORCH_WHEEL=cpu docker compose up -d
+
+name: cv-mlair-stack
+
+include:
+  - docker-compose.yml
+  - docker-compose.gpu.yml
