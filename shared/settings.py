@@ -118,6 +118,9 @@ class Settings:
     mlair_train_import_stage: str = _env("CV_MLAIR_TRAIN_IMPORT_STAGE", "production")
     mlair_prepare_fallback_pseudo: bool = _env_bool("CV_MLAIR_PREPARE_FALLBACK_PSEUDO", True)
     mlair_prepare_pseudo_confidence: float = float(_env("CV_MLAIR_PREPARE_PSEUDO_CONF", "0.25"))
+    mlair_detect_confidence: float = float(_env("CV_MLAIR_DETECT_CONF", "0.25"))
+    # 0 = use CV_MLAIR_TRAIN_MAX_FRAMES cap (same as prepare/train pull)
+    mlair_detect_max_frames: int = int(_env("CV_MLAIR_DETECT_MAX_FRAMES", "0"))
 
     video_extensions: frozenset[str] = frozenset(
         {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}

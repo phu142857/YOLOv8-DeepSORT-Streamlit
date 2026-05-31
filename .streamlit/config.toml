@@ -1,8 +1,8 @@
 [server]
 # Match CV_DATASET_ZIP_MAX_MB (in MB). Streamlit default is 200MB.
 maxUploadSize = 2048
-# AWS ALB path prefix /cv (see docker-compose.aws.yml --server.baseUrlPath=/cv).
-baseUrlPath = "/cv"
+# Local: serve at http://localhost:8501/
+# AWS/EKS: --server.baseUrlPath=/cv in compose/Helm (ALB path prefix).
 enableCORS = false
 enableXsrfProtection = false
 headless = true

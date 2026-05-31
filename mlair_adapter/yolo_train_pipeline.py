@@ -22,6 +22,7 @@ from ultralytics import YOLO
 
 from inference.engine import load_model, predict_frame
 from mlair_adapter.dataset_client import DatasetClient
+from mlair_adapter.job_detections import load_job_detections as _load_job_detections
 from shared.artifacts import ArtifactStore
 from shared.image_io import load_image_bgr
 from mlair_adapter.model_client import ModelClient
@@ -224,38 +225,6 @@ def _pseudo_label_samples(
         if detections:
             labeled.append((img_path, job_id, detections))
     return labeled
-
-
-def _load_job_detections(job_id: str, store: ArtifactStore | None = None) -> dict[str, list[dict[str, Any]]]:
-    """frame_index (stem) -> detections list from job artifacts."""
-    store = store or ArtifactStore()
-    path = store.resolve_artifact(job_id, "detections")
-    if path is None or not path.is_file():
-        return {}
-
-    out: dict[str, list[dict[str, Any]]] = {}
-    if path.suffix == ".json":
-        try:
-            row = json.loads(path.read_text(encoding="utf-8"))
-            frame = str(row.get("frame", "0"))
-            out[frame.zfill(6) if frame.isdigit() else frame] = row.get("detections") or []
-            return out
-        except json.JSONDecodeError:
-            return {}
-
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        frame = str(row.get("frame", row.get("frame_index", "")))
-        dets = row.get("detections") or []
-        if frame and dets:
-            out[frame.zfill(6) if frame.isdigit() else frame] = dets
-    return out
 
 
 def _xyxy_to_yolo_line(xyxy: list[float], img_w: int, img_h: int, class_id: int) -> str:

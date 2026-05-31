@@ -1,6 +1,6 @@
 # MLAir Phase B — Lifecycle pipeline (YOLO)
 
-Pipeline **`cv-yolo-lifecycle-train`** (DAG 4 bước) + **`cv-hard-example-mine`** (tùy chọn).
+Pipeline **`cv-yolo-lifecycle-train`** (DAG 5 bước) + **`cv-hard-example-mine`** (tùy chọn).
 
 ## Lưu trữ trên container (volume Docker)
 
@@ -21,7 +21,8 @@ docker run --rm -v cv-mlair-stack_cv_workload_artifacts:/dst -v "$(pwd)/artifact
 ## DAG train
 
 ```text
-prepare (cv_yolo_prepare)
+detect (cv_yolo_detect)     # chỉ frame thiếu detections.json(l)
+    → prepare (cv_yolo_prepare)
     → train (cv_yolo_train)     # import stage staging
     → eval (cv_yolo_eval)       # mAP50 trên val split
     → gate (cv_yolo_gate)       # so với production; promote nếu pass
@@ -29,7 +30,8 @@ prepare (cv_yolo_prepare)
 
 | Task | Plugin | Việc làm |
 |------|--------|----------|
-| prepare | `cv_yolo_prepare` | Tải dataset version, pseudo-label từ job detections, `data.yaml` |
+| detect | `cv_yolo_detect` | YOLO trên frame thiếu label; skip frame đã có `detections.json(l)` |
+| prepare | `cv_yolo_prepare` | Tải dataset version, đọc job detections → `data.yaml` (pseudo-label fallback nếu bật) |
 | train | `cv_yolo_train` | Ultralytics fine-tune, import `.pt` stage **staging** |
 | eval | `cv_yolo_eval` | `val()` checkpoint candidate → `mAP50` |
 | gate | `cv_yolo_gate` | `val()` production weights cùng val set; promote nếu `candidate >= prod + delta` |
@@ -58,20 +60,43 @@ CV_MLAIR_HARD_EXAMPLE_PIPELINE_ID=cv-hard-example-mine
 CV_MLAIR_HARD_EXAMPLE_DATASET=cv-traffic-hard-examples
 CV_MLAIR_HARD_EXAMPLE_MAX_CONF=0.35
 CV_MLAIR_HARD_EXAMPLE_MAX_SCAN=500
+
+# Lifecycle detect (trước prepare)
+CV_MLAIR_DETECT_CONF=0.25
+CV_MLAIR_DETECT_MAX_FRAMES=0
 ```
 
-## Triển khai stack
+`CV_MLAIR_DETECT_MAX_FRAMES=0` → dùng cùng cap `CV_MLAIR_TRAIN_MAX_FRAMES`.
+
+### Test detect local (không cần worker lease)
 
 ```bash
-docker compose build api cv-api
-docker compose up -d api scheduler mlair-cv-train-worker cv-api
+export CV_MLAIR_API_URL=http://localhost:8080
+export CV_MLAIR_TOKEN=admin-token
+export CV_API_BASE_URL=http://127.0.0.1:8000
 
+python scripts/run_cv_yolo_detect_local.py \
+  --dataset-version-id <version-uuid> \
+  --model-id <model-uuid> \
+  --run-id local-detect-test
+```
+
+Sau bootstrap pipeline + plugin reload trên Hub:
+
+```bash
 curl -X POST http://localhost:8000/api/v1/registry/pipeline/bootstrap
 curl -X POST "http://localhost:8080/v1/tenants/default/projects/default_project/plugins/reload" \
   -H "Authorization: Bearer admin-token" -d '{}'
 ```
 
-Worker: `scripts/mlair_cv_pipeline_worker.py` (capabilities = 5 plugin).
+Worker: `scripts/mlair_cv_pipeline_worker.py` (capabilities = 6 plugin).
+
+## Triển khai stack
+
+```bash
+docker compose build api cv-api cv-lifecycle-workload
+docker compose up -d api scheduler mlair-cv-train-worker cv-api
+```
 
 API image: `deploy/Dockerfile.mlair-api-cv-plugins` (cài `integrations/mlair_cv_plugins` v0.2).
 
@@ -79,7 +104,7 @@ API image: `deploy/Dockerfile.mlair-api-cv-plugins` (cài `integrations/mlair_cv
 
 1. Model có **pipeline-mapping** → `cv-yolo-lifecycle-train`
 2. Dataset version **pinned** + readiness **READY**
-3. Run pipeline → 4 task trên worker
+3. Run pipeline → 5 task trên worker (detect → prepare → train → eval → gate)
 4. Gate pass → **promote production** + webhook → `weights/detection`
 
 ## Legacy

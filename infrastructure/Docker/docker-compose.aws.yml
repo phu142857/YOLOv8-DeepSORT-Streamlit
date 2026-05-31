@@ -214,7 +214,7 @@ services:
       MLAIR_API_BASE_URL: http://api:8080
       MLAIR_WORKER_TOKEN: ${ML_AIR_TRACKING_TOKEN}
       MLAIR_WORKER_ID: ${MLAIR_CV_TRAIN_WORKER_ID:-}
-      MLAIR_CAPABILITIES: cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine
+      MLAIR_CAPABILITIES: cv_yolo_detect,cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine
       CV_ARTIFACT_ROOT: /app/artifacts
       CV_MLAIR_API_URL: http://api:8080
       CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN}

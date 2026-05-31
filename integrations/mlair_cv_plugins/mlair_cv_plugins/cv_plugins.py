@@ -31,6 +31,26 @@ class CvYoloPreparePlugin:
         return True
 
 
+class CvYoloDetectPlugin:
+    meta = {
+        "name": "cv_yolo_detect",
+        "version": "0.2.0",
+        "engine_version": "1.0.0",
+        "inputs": {"dataset_version_id": "string", "model_id": "string"},
+        "outputs": {
+            "detected": "number",
+            "already_labeled": "number",
+            "skipped": "boolean",
+        },
+        "ui_schema": None,
+        "lineage": {"inputs": ["dataset_version", "production_model"], "outputs": ["job_detections"]},
+    }
+
+    def validate(self, context: dict[str, Any]) -> bool:
+        _require(context, "dataset_version_id", "model_id")
+        return True
+
+
 class CvYoloTrainPlugin:
     meta = {
         "name": "cv_yolo_train",

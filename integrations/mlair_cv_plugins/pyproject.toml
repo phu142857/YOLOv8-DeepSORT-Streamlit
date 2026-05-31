@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.entry-points."mlair.plugins"]
+cv_yolo_detect = "mlair_cv_plugins.cv_plugins:CvYoloDetectPlugin"
 cv_yolo_prepare = "mlair_cv_plugins.cv_plugins:CvYoloPreparePlugin"
 cv_yolo_train = "mlair_cv_plugins.cv_plugins:CvYoloTrainPlugin"
 cv_yolo_eval = "mlair_cv_plugins.cv_plugins:CvYoloEvalPlugin"

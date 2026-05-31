@@ -7,9 +7,15 @@
   ],
   "tasks": [
     {
+      "id": "detect",
+      "plugin": "cv_yolo_detect",
+      "plugin_version": ">=0.1.0,<3.0.0"
+    },
+    {
       "id": "prepare",
       "plugin": "cv_yolo_prepare",
-      "plugin_version": ">=0.1.0,<3.0.0"
+      "plugin_version": ">=0.1.0,<3.0.0",
+      "depends_on": ["detect"]
     },
     {
       "id": "train",

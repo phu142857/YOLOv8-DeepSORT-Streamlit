@@ -43,7 +43,7 @@ spec:
                   fieldPath: metadata.name
             {{- end }}
             - name: MLAIR_CAPABILITIES
-              value: "cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine"
+              value: "cv_yolo_detect,cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine"
             - name: CV_ARTIFACT_ROOT
               value: {{ .Values.storage.cvArtifacts.mountPath | quote }}
             - name: CV_MLAIR_API_URL

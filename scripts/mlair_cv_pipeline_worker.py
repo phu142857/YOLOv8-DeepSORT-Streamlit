@@ -2,7 +2,7 @@
 """
 MLAir external worker for CV lifecycle plugins (Phase B DAG).
 
-Capabilities: cv_yolo_prepare, cv_yolo_train, cv_yolo_eval, cv_yolo_gate, cv_hard_example_mine
+Capabilities: cv_yolo_detect, cv_yolo_prepare, cv_yolo_train, cv_yolo_eval, cv_yolo_gate, cv_hard_example_mine
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from mlair_adapter.worker_context import plugin_context_from_lease_task
 from mlair_adapter.worker_log_capture import capture_task_logs
 from mlair_adapter.worker_task_runtime import post_json, run_handler_with_heartbeat, task_url
 from mlair_adapter.yolo_lifecycle import (
+    run_detect,
     run_eval,
     run_gate,
     run_hard_example_mine,
@@ -37,6 +38,7 @@ from mlair_adapter.yolo_lifecycle import (
 )
 
 PLUGIN_HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "cv_yolo_detect": run_detect,
     "cv_yolo_prepare": run_prepare,
     "cv_yolo_train": lambda ctx: _dispatch_train(ctx),
     "cv_yolo_eval": run_eval,

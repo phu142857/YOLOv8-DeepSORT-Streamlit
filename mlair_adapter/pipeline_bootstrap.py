@@ -42,14 +42,35 @@ def _latest_pipeline_config(client: MLAirClient, pfx: str, pipeline_id: str) -> 
         return None
 
 
-def _needs_new_pipeline_version(*, latest: dict | None, mode: str) -> bool:
+def _pipeline_task_signature(config: dict) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """Stable compare key for DAG tasks (id, plugin/type, depends_on)."""
+    tasks = config.get("tasks") or []
+    sig: list[tuple[str, str, tuple[str, ...]]] = []
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        task_id = str(t.get("id") or "").strip()
+        kind = str(t.get("plugin") or t.get("type") or "").strip().lower()
+        deps = tuple(str(d).strip() for d in (t.get("depends_on") or []) if str(d).strip())
+        sig.append((task_id, kind, deps))
+    return tuple(sig)
+
+
+def _needs_new_pipeline_version(
+    *,
+    latest: dict | None,
+    mode: str,
+    pipeline_id: str,
+    train_url: str | None = None,
+) -> bool:
     if not latest:
         return True
-    if mode == "plugin":
-        return not _tasks_have_plugin(latest)
-    if mode == "http":
-        return not _tasks_have_http(latest)
-    return True
+    if mode == "plugin" and not _tasks_have_plugin(latest):
+        return True
+    if mode == "http" and not _tasks_have_http(latest):
+        return True
+    desired = load_pipeline_config(pipeline_id, mode=mode, cv_train_url=train_url)
+    return _pipeline_task_signature(desired) != _pipeline_task_signature(latest)
 
 
 def map_all_models_to_pipeline(
@@ -111,7 +132,12 @@ def _publish_pipeline_version(
     force_republish: bool,
 ) -> dict:
     latest_cfg = _latest_pipeline_config(client, pfx, pipeline_id)
-    needs_publish = force_republish or _needs_new_pipeline_version(latest=latest_cfg, mode=mode)
+    needs_publish = force_republish or _needs_new_pipeline_version(
+        latest=latest_cfg,
+        mode=mode,
+        pipeline_id=pipeline_id,
+        train_url=train_url,
+    )
     version_id: str | None = None
     skipped = False
     republished = False

@@ -19,6 +19,7 @@ from mlair_adapter.model_sync import ModelSyncService
 from mlair_adapter.run_workspace import load_state, require_keys, save_state, workspace_dir
 from mlair_adapter.train_device import resolve_train_device, run_ultralytics_train_with_device_policy
 from mlair_adapter.worker_task_runtime import capture_active_monitor_sample
+from mlair_adapter.yolo_detect import run_incremental_detect
 from mlair_adapter.yolo_train_pipeline import (
     _build_yolo_dataset,
     _metrics_from_train_results,
@@ -68,6 +69,44 @@ def _context_ids(context: dict[str, Any]) -> tuple[str, str, str]:
     if not model_id:
         raise ValueError("model_id is required (set in pipeline context or register model on Hub)")
     return run_id, model_id, version_id
+
+
+def run_detect(context: dict[str, Any]) -> dict[str, Any]:
+    """Run YOLO on frames missing job detections; skip frames already labeled."""
+    run_id, model_id, version_id = _context_ids(context)
+    logger.info(
+        "detect run_id=%s model_id=%s dataset_version_id=%s",
+        run_id,
+        model_id,
+        version_id,
+    )
+    result = run_incremental_detect(version_id, context=context)
+    if not result.get("ok"):
+        return result
+
+    save_state(
+        run_id,
+        {
+            "model_id": model_id,
+            "dataset_version_id": version_id,
+            "detect_ok": True,
+            "detect_result": result,
+        },
+    )
+    return {
+        "ok": True,
+        "step": "detect",
+        "run_id": run_id,
+        "model_id": model_id,
+        "dataset_version_id": version_id,
+        "metrics": {
+            "total_frames": float(result.get("total_frames") or 0),
+            "already_labeled": float(result.get("already_labeled") or 0),
+            "detected": float(result.get("detected") or 0),
+            "failed": float(result.get("failed") or 0),
+        },
+        **result,
+    }
 
 
 def run_prepare(context: dict[str, Any]) -> dict[str, Any]:
