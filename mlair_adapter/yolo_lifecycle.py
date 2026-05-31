@@ -17,7 +17,7 @@ from mlair_adapter.dataset_client import DatasetClient
 from mlair_adapter.model_client import ModelClient
 from mlair_adapter.model_sync import ModelSyncService
 from mlair_adapter.run_workspace import load_state, require_keys, save_state, workspace_dir
-from mlair_adapter.train_device import resolve_train_device
+from mlair_adapter.train_device import resolve_train_device, run_ultralytics_train_with_device_policy
 from mlair_adapter.worker_task_runtime import capture_active_monitor_sample
 from mlair_adapter.yolo_train_pipeline import (
     _build_yolo_dataset,
@@ -123,19 +123,18 @@ def run_train_step(context: dict[str, Any]) -> dict[str, Any]:
 
     logger.info("lifecycle train run_id=%s model=%s version=%s", run_id, model_id, version_id)
     model = YOLO(str(base_weights))
-    train_device = resolve_train_device(batch=settings.mlair_train_batch)
-    logger.info("lifecycle train device=%s", train_device)
-    results = model.train(
+    results, train_device = run_ultralytics_train_with_device_policy(
+        model,
+        batch=settings.mlair_train_batch,
         data=str(data_yaml),
         epochs=settings.mlair_train_epochs,
         imgsz=settings.mlair_train_imgsz,
-        batch=settings.mlair_train_batch,
-        device=train_device,
         project=str(work_dir / "runs"),
         name="train",
         exist_ok=True,
         verbose=True,
     )
+    logger.info("lifecycle train finished device=%s", train_device)
 
     best_pt, save_dir = _resolve_train_checkpoint(model, results, work_dir)
 
@@ -153,6 +152,7 @@ def run_train_step(context: dict[str, Any]) -> dict[str, Any]:
             "import_stage": import_stage,
             "train_metrics": train_metrics,
             "train_ok": True,
+            "train_device": str(train_device),
         },
     )
     return {

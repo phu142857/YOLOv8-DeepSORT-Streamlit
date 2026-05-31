@@ -13,7 +13,7 @@ import cv2
 import yaml
 
 from mlair_adapter.torch_compat import apply_torch_checkpoint_compat
-from mlair_adapter.train_device import resolve_train_device
+from mlair_adapter.train_device import resolve_train_device, run_ultralytics_train_with_device_policy
 
 apply_torch_checkpoint_compat()
 
@@ -400,19 +400,18 @@ def run_yolo_training(context: dict[str, Any], *, work_root: Path | None = None)
     )
 
     model = YOLO(str(base_weights))
-    train_device = resolve_train_device(batch=settings.mlair_train_batch)
-    logger.info("YOLO train device=%s", train_device)
-    results = model.train(
+    results, train_device = run_ultralytics_train_with_device_policy(
+        model,
+        batch=settings.mlair_train_batch,
         data=str(data_yaml),
         epochs=settings.mlair_train_epochs,
         imgsz=settings.mlair_train_imgsz,
-        batch=settings.mlair_train_batch,
-        device=train_device,
         project=str(work_dir / "runs"),
         name="train",
         exist_ok=True,
         verbose=True,
     )
+    logger.info("YOLO train finished device=%s", train_device)
 
     best_pt, save_dir = _resolve_train_checkpoint(model, results, work_dir)
 
