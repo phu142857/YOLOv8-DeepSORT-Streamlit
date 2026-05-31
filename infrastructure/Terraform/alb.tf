@@ -61,8 +61,13 @@ resource "aws_lb_target_group" "cv_ui" {
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
 
+  # Streamlit runs with --server.baseUrlPath=/cv (see docker-compose.aws.yml).
   health_check {
-    path = "/_stcore/health"
+    path                = "/cv/_stcore/health"
+    matcher             = "200"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 30
   }
 }
 

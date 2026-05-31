@@ -189,6 +189,18 @@ services:
     depends_on:
       cv-api:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/cv/_stcore/health', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
     restart: unless-stopped
 
   # Optional on EC2 when using EKS workers (deploy_eks.sh). Scale with:
