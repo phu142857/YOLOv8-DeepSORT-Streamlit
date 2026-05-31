@@ -107,6 +107,35 @@ def fmt_usage(u: dict | None) -> str:
     return " ".join(str(p) for p in parts)
 
 
+def fmt_mem_gb(mb: float | int | None) -> str:
+    if mb is None:
+        return "—"
+    return f"{float(mb) / 1024:.2f} GB"
+
+
+def print_task_table(task_rows: list[dict]) -> None:
+    print(f"\n{'Plugin':<18} {'Status':<10} {'mem_peak':>10} {'gpu_peak':>10} {'cpu_peak':>10}")
+    print("-" * 62)
+    for t in task_rows:
+        plugin = str(t.get("plugin") or t.get("task_type") or "?")
+        st = str(t.get("status") or "?")
+        tid = t.get("task_id") or t.get("id")
+        usage = None
+        try:
+            bundle = get(f"/v1/tenants/{TENANT}/projects/{PROJECT}/tasks/{tid}/usage")
+            usage = bundle.get("usage") if isinstance(bundle, dict) else bundle
+        except Exception:
+            usage = None
+        mem = usage.get("memory_mb_peak") if isinstance(usage, dict) else None
+        gpu = usage.get("gpu_util_pct_peak") if isinstance(usage, dict) else None
+        cpu = usage.get("cpu_pct_peak") if isinstance(usage, dict) else None
+        print(
+            f"{plugin:<18} {st:<10} {fmt_mem_gb(mem):>10} "
+            f"{(f'{float(gpu):.1f}%' if gpu is not None else '—'):>10} "
+            f"{(f'{float(cpu):.1f}%' if cpu is not None else '—'):>10}"
+        )
+
+
 def main() -> int:
     dataset_id, version_id, ver_label = find_dataset_version_id()
     model_id = pick_model_id()
@@ -147,7 +176,8 @@ def main() -> int:
 
     tasks = get(f"/v1/tenants/{TENANT}/projects/{PROJECT}/runs/{run_id}/tasks")
     task_rows = items(tasks, "items", "tasks")
-    print(f"\n=== Tasks ({len(task_rows)}) ===")
+    print_task_table(task_rows)
+    print(f"\n=== Tasks detail ({len(task_rows)}) ===")
     ok = True
     for t in task_rows:
         tid = t.get("task_id") or t.get("id")

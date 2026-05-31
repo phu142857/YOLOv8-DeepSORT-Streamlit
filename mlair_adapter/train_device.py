@@ -164,6 +164,9 @@ def run_ultralytics_train_with_device_policy(
             failures,
         )
         try:
+            from mlair_adapter.worker_task_runtime import refresh_task_memory_baseline
+
+            refresh_task_memory_baseline()
             results = model.train(device="cpu", **train_kwargs)
             logger.info("train succeeded on CPU after GPU failure streak")
             return results, "cpu"

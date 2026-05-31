@@ -27,6 +27,13 @@ def capture_active_monitor_sample() -> None:
         monitor._inner.sample_once()
 
 
+def refresh_task_memory_baseline() -> None:
+    """Re-baseline RSS after in-task phase change (GPU train fail → CPU retry)."""
+    monitor = _active_monitor.get()
+    if monitor is not None:
+        monitor.refresh_memory_baseline()
+
+
 def _heartbeat_interval_sec() -> float:
     raw = (
         os.getenv("MLAIR_HEARTBEAT_INTERVAL_SEC")

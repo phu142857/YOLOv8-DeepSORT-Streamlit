@@ -135,6 +135,7 @@ def run_train_step(context: dict[str, Any]) -> dict[str, Any]:
         verbose=True,
     )
     logger.info("lifecycle train finished device=%s", train_device)
+    capture_active_monitor_sample()
 
     best_pt, save_dir = _resolve_train_checkpoint(model, results, work_dir)
 

@@ -17,6 +17,8 @@ except ImportError:  # pragma: no cover
 
 # Min task VRAM delta (MB) before reporting GPU on Hub (skip idle CUDA context).
 _GPU_REPORT_MIN_MB = float(os.getenv("MLAIR_GPU_REPORT_MIN_MB", "20"))
+# Ignore per-task RSS delta spikes above this (bad baseline / absolute leak into heartbeats).
+_MEM_DELTA_SANITY_MAX_MB = float(os.getenv("MLAIR_MEM_DELTA_SANITY_MAX_MB", "16384"))
 
 
 def resource_monitor_enabled() -> bool:
@@ -287,6 +289,7 @@ class TaskResourceMonitor:
         self._gpu_seconds_acc = 0.0
         self._gpu_mem_mb_seconds_acc = 0.0
         self._mem_rss_baseline_bytes = 0
+        self._mem_rss_peak_delta_bytes = 0
         self._gpu_pid_mem_baseline_mb = 0.0
         self._gpu_device_mem_baseline_mb = 0.0
         self._gpu_compute_mem_baseline_mb = 0.0
@@ -322,7 +325,9 @@ class TaskResourceMonitor:
         pids = {p.pid for p in self._process_tree(pid)}
         self._root_pid = pid
         self._started_at = time.perf_counter()
-        self._mem_rss_baseline_bytes = self._memory_rss_bytes_tree(pid)
+        tree_rss = self._memory_rss_bytes_tree(pid)
+        self._mem_rss_baseline_bytes = tree_rss
+        self._mem_rss_peak_delta_bytes = 0
         self._gpu_pid_mem_baseline_mb = float(_nvml_pid_mem_mb(pids) or 0.0)
         self._gpu_device_mem_baseline_mb = float(_nvml_device_used_mb(0) or 0.0)
         self._gpu_compute_mem_baseline_mb = float(_nvml_total_compute_mem_mb(0) or 0.0)
@@ -337,6 +342,13 @@ class TaskResourceMonitor:
             self._gpu_mem_mb_seconds_acc = 0.0
             self._cuda_peak_seen_mb = 0.0
 
+    def refresh_memory_baseline(self) -> None:
+        """Re-baseline RSS after a phase change (e.g. GPU fail → CPU retry in same task)."""
+        if psutil is None or self._root_pid is None:
+            return
+        self._mem_rss_baseline_bytes = self._memory_rss_bytes_tree(self._root_pid)
+        self._mem_rss_peak_delta_bytes = 0
+
     def stop(self) -> dict[str, Any]:
         return self.build_report()
 
@@ -345,7 +357,16 @@ class TaskResourceMonitor:
             return None
         procs = self._process_tree(self._root_pid)
         pids = {p.pid for p in procs}
-        mem_bytes = max(0, self._memory_rss_bytes_tree(self._root_pid) - self._mem_rss_baseline_bytes)
+        mem_bytes = self._memory_rss_bytes_tree(self._root_pid)
+        if self._mem_rss_baseline_bytes <= 0 and mem_bytes > 0:
+            self._mem_rss_baseline_bytes = mem_bytes
+        delta_bytes = max(0, mem_bytes - self._mem_rss_baseline_bytes)
+        delta_mb = delta_bytes / (1024.0 * 1024.0)
+        if delta_mb > _MEM_DELTA_SANITY_MAX_MB:
+            delta_bytes = 0
+            delta_mb = 0.0
+        elif delta_bytes > self._mem_rss_peak_delta_bytes:
+            self._mem_rss_peak_delta_bytes = delta_bytes
         gpu_util, nvml_mem = _gpu_stats_for_pids(
             pids,
             pid_mem_baseline_mb=self._gpu_pid_mem_baseline_mb,
@@ -375,7 +396,7 @@ class TaskResourceMonitor:
             sample = {
                 "sampled_at": _iso_now(),
                 "cpu_percent": cpu_pct,
-                "memory_mb": round(mem_bytes / (1024.0 * 1024.0), 2) if mem_bytes > 0 else 0.0,
+                "memory_mb": round(delta_mb, 2),
                 "gpu_util_percent": gpu_util_out,
                 "gpu_memory_mb": gpu_mem_mb,
             }
@@ -457,13 +478,15 @@ class TaskResourceMonitor:
                 disk_write = max(0, disk_end[1] - self._disk_io0[1])
 
         memory_rss_kb = None
+        peak_delta_bytes = self._mem_rss_peak_delta_bytes
         if samples:
             peak_mb = max(float(s["memory_mb"]) for s in samples if s.get("memory_mb") is not None)
-            memory_rss_kb = int(peak_mb * 1024)
+            peak_delta_bytes = max(peak_delta_bytes, int(peak_mb * 1024))
         elif self._root_pid is not None and psutil is not None:
             rss = max(0, self._memory_rss_bytes_tree(self._root_pid) - self._mem_rss_baseline_bytes)
-            if rss > 0:
-                memory_rss_kb = int(rss / 1024)
+            peak_delta_bytes = max(peak_delta_bytes, rss)
+        if peak_delta_bytes > 0:
+            memory_rss_kb = int(peak_delta_bytes / 1024)
 
         resource_usage: dict[str, Any] = {}
         if wall_seconds > 0:

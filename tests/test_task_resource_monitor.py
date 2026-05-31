@@ -1,3 +1,4 @@
+import os
 import unittest
 
 from mlair_adapter.task_resource_monitor import cpu_percent_from_delta
@@ -79,6 +80,42 @@ class TaskResourceMonitorTest(unittest.TestCase):
                     )
         self.assertIsNone(util)
         self.assertIsNone(mem)
+
+    def test_sample_once_reports_task_scoped_rss_delta(self) -> None:
+        from unittest import mock
+
+        from mlair_adapter import task_resource_monitor as trm
+        from mlair_adapter.task_resource_monitor import TaskResourceMonitor
+
+        mon = TaskResourceMonitor(interval_seconds=1.0)
+        mon._root_pid = os.getpid()
+        baseline = 20 * 1024 * 1024 * 1024
+        mon._mem_rss_baseline_bytes = baseline
+        mon._mem_rss_peak_delta_bytes = 0
+        with mock.patch.object(mon, "_memory_rss_bytes_tree", return_value=baseline + 3 * 1024**3):
+            with mock.patch.object(mon, "_process_tree", return_value=[]):
+                with mock.patch.object(mon, "_cpu_percent_since_last_tree_locked", return_value=5.0):
+                    with mock.patch.object(trm, "_gpu_stats_for_pids", return_value=(None, None)):
+                        with mock.patch.object(mon, "_cuda_peak_delta_mb", return_value=None):
+                            sample = mon.sample_once()
+        self.assertIsNotNone(sample)
+        assert sample is not None
+        self.assertAlmostEqual(sample["memory_mb"], 3072.0, places=0)
+        self.assertEqual(mon._mem_rss_peak_delta_bytes, 3 * 1024**3)
+
+    def test_refresh_memory_baseline_resets_delta_peak(self) -> None:
+        from unittest import mock
+
+        from mlair_adapter.task_resource_monitor import TaskResourceMonitor
+
+        mon = TaskResourceMonitor(interval_seconds=1.0)
+        mon._root_pid = os.getpid()
+        mon._mem_rss_baseline_bytes = 100
+        mon._mem_rss_peak_delta_bytes = 5000
+        with mock.patch.object(mon, "_memory_rss_bytes_tree", return_value=8 * 1024**3):
+            mon.refresh_memory_baseline()
+        self.assertEqual(mon._mem_rss_baseline_bytes, 8 * 1024**3)
+        self.assertEqual(mon._mem_rss_peak_delta_bytes, 0)
 
     def test_gpu_stats_for_pids_cuda_context_noise_ignored(self) -> None:
         from unittest import mock

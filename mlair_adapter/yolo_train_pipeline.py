@@ -14,6 +14,7 @@ import yaml
 
 from mlair_adapter.torch_compat import apply_torch_checkpoint_compat
 from mlair_adapter.train_device import resolve_train_device, run_ultralytics_train_with_device_policy
+from mlair_adapter.worker_task_runtime import capture_active_monitor_sample
 
 apply_torch_checkpoint_compat()
 
@@ -412,6 +413,7 @@ def run_yolo_training(context: dict[str, Any], *, work_root: Path | None = None)
         verbose=True,
     )
     logger.info("YOLO train finished device=%s", train_device)
+    capture_active_monitor_sample()
 
     best_pt, save_dir = _resolve_train_checkpoint(model, results, work_dir)
 

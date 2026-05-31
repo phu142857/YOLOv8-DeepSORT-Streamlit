@@ -50,6 +50,9 @@ class ResourceMonitor:
     def attach_pid(self, pid: int) -> None:
         self._inner.attach_pid(pid)
 
+    def refresh_memory_baseline(self) -> None:
+        self._inner.refresh_memory_baseline()
+
     def stop(self) -> dict[str, Any]:
         self._report = self._inner.stop()
         return self._report
