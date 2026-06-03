@@ -108,6 +108,11 @@ cvTrainWorker:
   # Lease heartbeats / training params
   heartbeatIntervalSec: 1
   trainEpochs: 10
+  trainBatch: 8
+  trainWorkers: 4
+  # 0 = full dataset manifest (detect + prepare + train pull)
+  trainMaxFrames: 0
+  detectMaxFrames: 0
   resourceMonitorEnabled: true
   resourceSampleIntervalSec: 1
   # Provide unique worker_id per pod by default.
@@ -151,7 +156,7 @@ autoscaling:
     # minReplicas = guaranteed execution slots; maxReplicas = CPU burst (Phase 2: KEDA on queue).
     minReplicas: 1
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 75
+    targetCPUUtilizationPercentage: 90
   keda:
     enabled: false
     # Placeholder; requires KEDA installation and a scaler choice.

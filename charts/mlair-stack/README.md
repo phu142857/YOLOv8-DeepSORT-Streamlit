@@ -30,14 +30,14 @@ Three separate concerns — do not use CPU HPA as the only concurrency guarantee
 
 | Layer | Mechanism | Default (dev hybrid) |
 |-------|-----------|----------------------|
-| **Concurrency guarantee** | HPA `minReplicas` (= baseline pool) | **4** slots |
+| **Concurrency guarantee** | HPA `minReplicas` (= baseline pool) | **1** (use **4** for parallel-task QA) |
 | **Autoscaling (burst)** | HPA `maxReplicas` + CPU | up to **16** |
 | **Scheduling policy** | MLAir lease / queues | upstream (Phase 2–4) |
 
 Env overrides (persist across `./deploy_eks.sh`):
 
 ```bash
-CV_TRAIN_WORKER_MIN_REPLICAS=4   # guaranteed slots
+CV_TRAIN_WORKER_MIN_REPLICAS=4   # parallel-task QA (default deploy uses 1)
 CV_TRAIN_WORKER_MAX_REPLICAS=16  # burst ceiling
 SKIP_BUILD=1 ./infrastructure/deploy_eks.sh dev
 ```

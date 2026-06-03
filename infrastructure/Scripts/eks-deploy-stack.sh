@@ -71,14 +71,14 @@ trap 'rm -f "$VALUES_FILE"' EXIT
 
 export VALUES_FILE ALB_DNS ECR_REG EFS_ID EFS_AP_MODELS EFS_AP_DATASETS EFS_AP_CV IMAGE_TAG AUTH_TOKENS_JSON
 export DB_URL REDIS_EP JWT TRACK CV_TOKEN IMAGE_PREFIX MLAIR_API_URL
-export CV_TRAIN_WORKER_MIN_REPLICAS="${CV_TRAIN_WORKER_MIN_REPLICAS:-4}"
+export CV_TRAIN_WORKER_MIN_REPLICAS="${CV_TRAIN_WORKER_MIN_REPLICAS:-1}"
 export CV_TRAIN_WORKER_MAX_REPLICAS="${CV_TRAIN_WORKER_MAX_REPLICAS:-16}"
 export CV_TRAIN_WORKER_FIXED_POOL="${CV_TRAIN_WORKER_FIXED_POOL:-0}"
 python3 <<'PY'
 import json
 import os
 
-min_rep = int(os.environ.get("CV_TRAIN_WORKER_MIN_REPLICAS", "4"))
+min_rep = int(os.environ.get("CV_TRAIN_WORKER_MIN_REPLICAS", "1"))
 max_rep = int(os.environ.get("CV_TRAIN_WORKER_MAX_REPLICAS", "16"))
 fixed = int(os.environ.get("CV_TRAIN_WORKER_FIXED_POOL", "0"))
 if min_rep < 1:
@@ -125,9 +125,13 @@ out = {
         "replicas": min_rep,
         "resourceMonitorEnabled": True,
         "resourceSampleIntervalSec": 3,
+        "trainBatch": int(os.environ.get("CV_TRAIN_WORKER_TRAIN_BATCH", "4")),
+        "trainWorkers": int(os.environ.get("CV_TRAIN_WORKER_TRAIN_WORKERS", "2")),
+        "trainMaxFrames": int(os.environ.get("CV_TRAIN_WORKER_TRAIN_MAX_FRAMES", "0")),
+        "detectMaxFrames": int(os.environ.get("CV_TRAIN_WORKER_DETECT_MAX_FRAMES", "0")),
         "resources": {
-            "requests": {"cpu": "500m", "memory": "1Gi"},
-            "limits": {"cpu": "4", "memory": "8Gi"},
+            "requests": {"cpu": "500m", "memory": "2Gi"},
+            "limits": {"cpu": "4", "memory": "16Gi"},
         },
     },
     "autoscaling": {

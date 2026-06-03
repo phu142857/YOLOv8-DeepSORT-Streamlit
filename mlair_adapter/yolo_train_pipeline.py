@@ -89,6 +89,24 @@ def _resolve_train_checkpoint(
     return best_pt, save_dir
 
 
+def lifecycle_train_extra_kwargs(
+    work_dir: Path,
+    *,
+    run_name: str = "train",
+) -> dict[str, Any]:
+    """
+    Ultralytics kwargs for lifecycle train (resume after worker OOM/pod restart).
+
+    When ``runs/train/weights/last.pt`` exists on the shared artifact volume, continue
+    from that checkpoint instead of restarting all epochs from zero.
+    """
+    last_pt = work_dir / "runs" / run_name / "weights" / "last.pt"
+    if last_pt.is_file():
+        logger.info("Resuming YOLO train from checkpoint %s", last_pt)
+        return {"resume": str(last_pt)}
+    return {}
+
+
 def _find_checkpoint_under_runs(work_dir: Path, *, preferred_name: str = "train") -> tuple[Path, Path] | None:
     """Fallback when model.trainer is cleared but weights were written to disk."""
     runs_root = work_dir / "runs"

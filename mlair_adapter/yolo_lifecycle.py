@@ -25,6 +25,7 @@ from mlair_adapter.yolo_train_pipeline import (
     _metrics_from_train_results,
     _resolve_base_weights,
     _resolve_train_checkpoint,
+    lifecycle_train_extra_kwargs,
 )
 from shared.settings import settings
 
@@ -168,10 +169,12 @@ def run_train_step(context: dict[str, Any]) -> dict[str, Any]:
         data=str(data_yaml),
         epochs=settings.mlair_train_epochs,
         imgsz=settings.mlair_train_imgsz,
+        workers=settings.mlair_train_workers,
         project=str(work_dir / "runs"),
         name="train",
         exist_ok=True,
         verbose=True,
+        **lifecycle_train_extra_kwargs(work_dir),
     )
     logger.info("lifecycle train finished device=%s", train_device)
     capture_active_monitor_sample()

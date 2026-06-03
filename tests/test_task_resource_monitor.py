@@ -47,6 +47,21 @@ class TaskResourceMonitorTest(unittest.TestCase):
         self.assertEqual(util, 85.0)
         self.assertEqual(mem, 1380.0)
 
+    def test_gpu_util_from_memory_mb_none_is_safe(self) -> None:
+        from mlair_adapter.task_resource_monitor import _gpu_util_from_memory_mb
+
+        self.assertIsNone(_gpu_util_from_memory_mb(None))
+
+    def test_build_report_merge_cuda_none_is_safe(self) -> None:
+        from mlair_adapter import task_resource_monitor as trm
+        from mlair_adapter.task_resource_monitor import TaskResourceMonitor
+
+        mon = TaskResourceMonitor(interval_seconds=1.0)
+        mon.start(os.getpid())
+        mon.sample_once()
+        report = mon.stop()
+        self.assertIsInstance(report, dict)
+
     def test_gpu_stats_for_pids_zero_util_uses_memory_occupancy(self) -> None:
         from unittest import mock
 

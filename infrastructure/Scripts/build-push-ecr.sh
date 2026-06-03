@@ -43,8 +43,9 @@ build_cv_overlay_and_push() {
   export MLAIR_API_IMAGE="$api_base_image"
   docker compose build api
   tag_push ml-air-api-cv-workload ml-air-api:cv-workload
-  docker compose build cv-api
-  tag_push cv-lifecycle-workload cv-lifecycle-workload:latest
+  # EKS train workers need cu124; same tag used by EC2 cv-api/cv-ui (CPU fallback OK).
+  docker compose build mlair-cv-train-worker
+  tag_push cv-lifecycle-workload cv-lifecycle-workload:gpu
 }
 
 if [[ "$MLAIR_IMAGE_SOURCE" == "local" ]]; then

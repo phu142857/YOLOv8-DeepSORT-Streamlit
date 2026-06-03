@@ -62,6 +62,14 @@ spec:
               value: {{ .Values.cvTrainWorker.resourceSampleIntervalSec | quote }}
             - name: CV_MLAIR_TRAIN_EPOCHS
               value: {{ .Values.cvTrainWorker.trainEpochs | quote }}
+            - name: CV_MLAIR_TRAIN_BATCH
+              value: {{ .Values.cvTrainWorker.trainBatch | quote }}
+            - name: CV_MLAIR_TRAIN_WORKERS
+              value: {{ .Values.cvTrainWorker.trainWorkers | quote }}
+            - name: CV_MLAIR_TRAIN_MAX_FRAMES
+              value: {{ .Values.cvTrainWorker.trainMaxFrames | quote }}
+            - name: CV_MLAIR_DETECT_MAX_FRAMES
+              value: {{ .Values.cvTrainWorker.detectMaxFrames | quote }}
             - name: CV_DETECTION_MODEL_DIR
               value: "/mlair/artifacts/models/weights/detection"
           volumeMounts:

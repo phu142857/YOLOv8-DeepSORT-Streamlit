@@ -186,14 +186,22 @@ def _cuda_total_vram_mb() -> float | None:
         return None
 
 
-def _gpu_util_from_memory_mb(mem_mb: float) -> float | None:
-    total_mb = _cuda_total_vram_mb()
-    if total_mb is None or total_mb <= 0 or mem_mb <= 0:
+def _gpu_util_from_memory_mb(mem_mb: float | None) -> float | None:
+    if mem_mb is None:
         return None
-    return min(100.0, round((float(mem_mb) / total_mb) * 100.0, 1))
+    try:
+        mem = float(mem_mb)
+    except (TypeError, ValueError):
+        return None
+    if mem != mem or mem <= 0:  # NaN or non-positive
+        return None
+    total_mb = _cuda_total_vram_mb()
+    if total_mb is None or total_mb <= 0:
+        return None
+    return min(100.0, round((mem / total_mb) * 100.0, 1))
 
 
-def _resolve_gpu_util(nvml_util: float | None, mem_mb: float) -> float | None:
+def _resolve_gpu_util(nvml_util: float | None, mem_mb: float | None) -> float | None:
     util = nvml_util
     if util is None or float(util) <= 0:
         util = _gpu_util_nvidia_smi()
@@ -355,7 +363,16 @@ class TaskResourceMonitor:
     def sample_once(self) -> dict[str, Any] | None:
         if psutil is None or self._root_pid is None or not resource_monitor_enabled():
             return None
-        procs = self._process_tree(self._root_pid)
+        try:
+            return self._sample_once_impl()
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("resource sample_once failed: %s", exc)
+            return None
+
+    def _sample_once_impl(self) -> dict[str, Any] | None:
+        procs = self._process_tree(self._root_pid)  # type: ignore[arg-type]
         pids = {p.pid for p in procs}
         mem_bytes = self._memory_rss_bytes_tree(self._root_pid)
         if self._mem_rss_baseline_bytes <= 0 and mem_bytes > 0:
@@ -422,7 +439,7 @@ class TaskResourceMonitor:
         cuda_mb = self._cuda_peak_delta_mb(apply_threshold=False)
         if self._cuda_peak_seen_mb > 0:
             cuda_mb = max(float(cuda_mb or 0.0), float(self._cuda_peak_seen_mb))
-        if cuda_mb < _GPU_REPORT_MIN_MB:
+        if cuda_mb is None or float(cuda_mb) < _GPU_REPORT_MIN_MB:
             return
         cuda_mb = round(float(cuda_mb), 2)
         util = _resolve_gpu_util(_nvml_device_util(0), cuda_mb)

@@ -19,13 +19,13 @@ cvUi:
 
 cvTrainWorker:
   enabled: true
-  # Baseline concurrency (must match autoscaling.hpa.minReplicas when HPA is on).
-  replicas: 4
+  # Default 1 worker; scale up for parallel-task QA via CV_TRAIN_WORKER_MIN_REPLICAS=4
+  # or overlay values-eks-4-worker-pool.yaml.
+  replicas: 1
 
 autoscaling:
   hpa:
     enabled: true
-    # Guaranteed execution slots (concurrency floor) — NOT scaled down by idle CPU.
-    minReplicas: 4
+    minReplicas: 1
     # Reactive burst capacity (CPU-based until KEDA queue scaling — Phase 2).
     maxReplicas: 16

@@ -224,6 +224,8 @@ services:
       MLAIR_RESOURCE_MONITOR_ENABLED: "1"
       MLAIR_RESOURCE_SAMPLE_INTERVAL_SEC: "1"
       CV_MLAIR_TRAIN_EPOCHS: "10"
+      CV_MLAIR_TRAIN_MAX_FRAMES: "0"
+      CV_MLAIR_DETECT_MAX_FRAMES: "0"
     volumes:
       - /mnt/efs/cv-artifacts:/app/artifacts
       - /mnt/efs/mlair-models/weights:/app/weights

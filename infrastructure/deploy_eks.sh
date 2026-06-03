@@ -14,7 +14,7 @@ set -euo pipefail
 # Optional: SKIP_BUILD=1 ./deploy_eks.sh dev
 #
 # Worker concurrency (EKS cv-train-worker):
-#   CV_TRAIN_WORKER_MIN_REPLICAS=4   guaranteed execution slots (HPA floor)
+#   CV_TRAIN_WORKER_MIN_REPLICAS=1   default; use 4 for parallel-task QA (HPA floor)
 #   CV_TRAIN_WORKER_MAX_REPLICAS=16  burst ceiling (CPU HPA until KEDA)
 #   CV_TRAIN_WORKER_FIXED_POOL=N     disable HPA; exactly N replicas (legacy)
 

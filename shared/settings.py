@@ -113,8 +113,10 @@ class Settings:
     mlair_train_base_model_spec: str = _env("CV_MLAIR_TRAIN_BASE_MODEL", "yolov8s/pretrained")
     mlair_train_epochs: int = int(_env("CV_MLAIR_TRAIN_EPOCHS", "10"))
     mlair_train_batch: int = int(_env("CV_MLAIR_TRAIN_BATCH", "8"))
+    mlair_train_workers: int = int(_env("CV_MLAIR_TRAIN_WORKERS", "4"))
     mlair_train_imgsz: int = int(_env("CV_MLAIR_TRAIN_IMGSZ", "640"))
-    mlair_train_max_frames: int = int(_env("CV_MLAIR_TRAIN_MAX_FRAMES", "500"))
+    # 0 = use entire dataset version manifest (no cap). Set 500 etc. for quick QA only.
+    mlair_train_max_frames: int = int(_env("CV_MLAIR_TRAIN_MAX_FRAMES", "0"))
     mlair_train_import_stage: str = _env("CV_MLAIR_TRAIN_IMPORT_STAGE", "production")
     mlair_prepare_fallback_pseudo: bool = _env_bool("CV_MLAIR_PREPARE_FALLBACK_PSEUDO", True)
     mlair_prepare_pseudo_confidence: float = float(_env("CV_MLAIR_PREPARE_PSEUDO_CONF", "0.25"))
