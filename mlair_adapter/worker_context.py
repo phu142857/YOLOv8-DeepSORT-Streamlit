@@ -59,11 +59,24 @@ def plugin_context_from_lease_task(task: dict[str, Any]) -> dict[str, Any]:
     ctx.setdefault("pipeline_id", task.get("pipeline_id"))
 
     run_id = str(ctx.get("run_id") or "")
+    state: dict[str, Any] = {}
     if run_id:
-        _copy_keys(ctx, load_state(run_id))
+        state = load_state(run_id)
+        _copy_keys(ctx, state)
 
     if not str(ctx.get("dataset_version_id") or "").strip():
         ctx = _enrich_from_run_api(ctx)
+
+    if state.get("merge_ok") or state.get("detect_publish_ok"):
+        train_vid = str(
+            state.get("train_dataset_version_id") or state.get("dataset_version_id") or ""
+        ).strip()
+        if train_vid:
+            if not ctx.get("source_dataset_version_id"):
+                src = str(state.get("source_dataset_version_id") or "").strip()
+                if src:
+                    ctx["source_dataset_version_id"] = src
+            ctx["dataset_version_id"] = train_vid
 
     return ctx
 

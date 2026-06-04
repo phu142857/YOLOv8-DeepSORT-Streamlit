@@ -165,7 +165,7 @@ def _publish_pipeline_version(
 def ensure_cv_yolo_pipeline(
     *,
     map_models: bool = True,
-    required_size: int = 100,
+    required_size: int | None = None,
     train_url: str | None = None,
     mode: str | None = None,
     force_republish: bool = False,
@@ -181,6 +181,9 @@ def ensure_cv_yolo_pipeline(
     client = client or MLAirClient()
     if not client.enabled:
         return {"ok": False, "reason": "mlair_not_configured"}
+
+    if required_size is None:
+        required_size = settings.mlair_pipeline_required_size
 
     pipeline_id = settings.mlair_train_pipeline_id
     pfx = client._prefix()

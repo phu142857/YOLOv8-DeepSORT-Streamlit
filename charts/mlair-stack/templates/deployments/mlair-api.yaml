@@ -58,6 +58,8 @@ spec:
               value: "external"
             - name: ML_AIR_TASK_LEASE_SECONDS
               value: "300"
+            - name: ML_AIR_TENANT_QUOTA_ENFORCE
+              value: {{ .Values.mlairApi.tenantQuotaEnforce | default "1" | quote }}
             - name: MLAIR_MODEL_PROMOTE_WEBHOOK_URL
               value: "http://cv-api:8000/api/v1/mlair/promote-webhook"
             - name: MLAIR_MODEL_PROMOTE_WEBHOOK_BEARER_TOKEN

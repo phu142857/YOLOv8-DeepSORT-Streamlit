@@ -68,6 +68,8 @@ mlairApi:
   enabled: true
   replicas: 1
   image: "" # default derived from global.ecrRegistry/namePrefix
+  # Hub tenant quotas (Settings → Governance) return 429 when over limit
+  tenantQuotaEnforce: "1"
   resources: {}
 
 mlairScheduler:

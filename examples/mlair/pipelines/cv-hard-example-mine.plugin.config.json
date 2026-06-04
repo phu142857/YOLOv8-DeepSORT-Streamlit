@@ -2,7 +2,7 @@
   "inputs": [
     {
       "dataset": "cv-traffic-frames",
-      "required_size": 1
+      "required_size": 50
     }
   ],
   "tasks": [

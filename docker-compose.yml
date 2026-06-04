@@ -99,6 +99,7 @@ services:
       ML_AIR_RUNTIME_REALTIME_BASE_URL: ${ML_AIR_RUNTIME_REALTIME_BASE_URL:-ws://localhost:8001}
       ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK: ${ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK:-0}
       ML_AIR_STRICT_DATASET_VERSION_REQUIRED: ${ML_AIR_STRICT_DATASET_VERSION_REQUIRED:-1}
+      ML_AIR_TENANT_QUOTA_ENFORCE: ${ML_AIR_TENANT_QUOTA_ENFORCE:-1}
       ML_AIR_TASK_EXECUTION_MODE: ${ML_AIR_TASK_EXECUTION_MODE:-external}
       ML_AIR_TASK_LEASE_SECONDS: ${ML_AIR_TASK_LEASE_SECONDS:-300}
     ports:
@@ -205,7 +206,7 @@ services:
       MLAIR_WORKER_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
       # Leave blank by default so each replica uses its container HOSTNAME.
       MLAIR_WORKER_ID: ${MLAIR_CV_TRAIN_WORKER_ID:-}
-      MLAIR_CAPABILITIES: cv_yolo_detect,cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine
+      MLAIR_CAPABILITIES: cv_yolo_split,cv_yolo_detect,cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine
       CV_MLAIR_LIFECYCLE_IMPORT_STAGE: ${CV_MLAIR_LIFECYCLE_IMPORT_STAGE:-staging}
       CV_MLAIR_LIFECYCLE_AUTO_PROMOTE: ${CV_MLAIR_LIFECYCLE_AUTO_PROMOTE:-1}
       CV_MLAIR_GATE_MIN_MAP_DELTA: ${CV_MLAIR_GATE_MIN_MAP_DELTA:-0.0}

@@ -71,6 +71,9 @@ def build_complete_task_body(
     artifacts = artifacts_from_plugin_result(result, plugin=plugin)
     if artifacts:
         body["artifacts"] = artifacts
+    lineage = result.get("lineage")
+    if isinstance(lineage, dict) and (lineage.get("inputs") or lineage.get("outputs")):
+        body["lineage"] = lineage
     _attach_usage_report(body, usage_report)
     return body
 

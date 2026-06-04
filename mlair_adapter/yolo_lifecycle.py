@@ -19,7 +19,8 @@ from mlair_adapter.model_sync import ModelSyncService
 from mlair_adapter.run_workspace import load_state, require_keys, save_state, workspace_dir
 from mlair_adapter.train_device import resolve_train_device, run_ultralytics_train_with_device_policy
 from mlair_adapter.worker_task_runtime import capture_active_monitor_sample
-from mlair_adapter.yolo_detect import run_incremental_detect
+from mlair_adapter.yolo_detect import run_yolo_detect_merge
+from mlair_adapter.yolo_split import run_yolo_split
 from mlair_adapter.yolo_train_pipeline import (
     _build_yolo_dataset,
     _metrics_from_train_results,
@@ -72,16 +73,19 @@ def _context_ids(context: dict[str, Any]) -> tuple[str, str, str]:
     return run_id, model_id, version_id
 
 
-def run_detect(context: dict[str, Any]) -> dict[str, Any]:
-    """Run YOLO on frames missing job detections; skip frames already labeled."""
+def run_split(context: dict[str, Any]) -> dict[str, Any]:
+    """Check labeled / split input into Hub ``detected`` + ``not-detected`` (no YOLO)."""
     run_id, model_id, version_id = _context_ids(context)
     logger.info(
-        "detect run_id=%s model_id=%s dataset_version_id=%s",
+        "split run_id=%s model_id=%s dataset_version_id=%s",
         run_id,
         model_id,
         version_id,
     )
-    result = run_incremental_detect(version_id, context=context)
+    result = run_yolo_split(
+        version_id,
+        context={**context, "run_id": run_id, "model_id": model_id},
+    )
     if not result.get("ok"):
         return result
 
@@ -89,8 +93,54 @@ def run_detect(context: dict[str, Any]) -> dict[str, Any]:
         run_id,
         {
             "model_id": model_id,
-            "dataset_version_id": version_id,
+            "split_ok": True,
+            "source_dataset_version_id": version_id,
+            "detected_dataset_version_id": result.get("detected_dataset_version_id"),
+            "not_detected_dataset_version_id": result.get("not_detected_dataset_version_id"),
+            "detected_version_label": result.get("detected_version_label"),
+            "not_detected_version_label": result.get("not_detected_version_label"),
+            "split_result": result,
+        },
+    )
+    return {
+        "ok": True,
+        "step": "split",
+        "run_id": run_id,
+        "model_id": model_id,
+        "source_dataset_version_id": version_id,
+        "metrics": {
+            "total_frames": float(result.get("total_frames") or 0),
+            "already_labeled": float(result.get("already_labeled") or 0),
+            "not_labeled": float(result.get("not_labeled") or 0),
+        },
+        **result,
+    }
+
+
+def run_detect(context: dict[str, Any]) -> dict[str, Any]:
+    """YOLO on not-detected branch, merge → ``train-ready`` (requires prior ``split``)."""
+    run_id = str(context.get("run_id") or "manual").strip()
+    model_id = str(context.get("model_id") or context.get("mlair_model_id") or "").strip()
+    if not model_id:
+        raise ValueError("model_id is required")
+
+    logger.info("detect run_id=%s model_id=%s", run_id, model_id)
+    result = run_yolo_detect_merge({**context, "run_id": run_id, "model_id": model_id})
+    if not result.get("ok"):
+        return result
+
+    train_vid = str(result.get("train_dataset_version_id") or "")
+    state = load_state(run_id)
+    source_vid = str(state.get("source_dataset_version_id") or "").strip()
+
+    save_state(
+        run_id,
+        {
+            "model_id": model_id,
+            "merge_ok": True,
             "detect_ok": True,
+            "dataset_version_id": train_vid,
+            "train_dataset_version_id": train_vid,
             "detect_result": result,
         },
     )
@@ -99,12 +149,14 @@ def run_detect(context: dict[str, Any]) -> dict[str, Any]:
         "step": "detect",
         "run_id": run_id,
         "model_id": model_id,
-        "dataset_version_id": version_id,
+        "source_dataset_version_id": source_vid,
+        "dataset_version_id": train_vid,
         "metrics": {
-            "total_frames": float(result.get("total_frames") or 0),
             "already_labeled": float(result.get("already_labeled") or 0),
             "detected": float(result.get("detected") or 0),
             "failed": float(result.get("failed") or 0),
+            "not_detected_frames": float(result.get("not_detected_frames") or 0),
+            "train_ready_frames": float(result.get("train_ready_record_count") or 0),
         },
         **result,
     }

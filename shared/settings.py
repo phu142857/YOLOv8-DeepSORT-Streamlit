@@ -55,6 +55,8 @@ class Settings:
     mlair_tenant: str = _env("CV_MLAIR_TENANT", "default")
     mlair_project: str = _env("CV_MLAIR_PROJECT", "default_project")
     mlair_dataset_name: str = _env("CV_MLAIR_DATASET_NAME", "cv-traffic-frames")
+    # MLAir pipeline input + training-policy minimum record count (Hub readiness).
+    mlair_pipeline_required_size: int = int(_env("CV_MLAIR_PIPELINE_REQUIRED_SIZE", "50"))
     mlair_auto_ingest: bool = _env_bool("CV_MLAIR_AUTO_INGEST", True)
     mlair_auto_materialize: bool = _env_bool("CV_MLAIR_AUTO_MATERIALIZE", True)
     # Ignored at runtime — threshold/strategy come from MLAir Hub buffer API.
@@ -123,6 +125,12 @@ class Settings:
     mlair_detect_confidence: float = float(_env("CV_MLAIR_DETECT_CONF", "0.25"))
     # 0 = use CV_MLAIR_TRAIN_MAX_FRAMES cap (same as prepare/train pull)
     mlair_detect_max_frames: int = int(_env("CV_MLAIR_DETECT_MAX_FRAMES", "0"))
+    # Lifecycle detect: split source → Hub datasets, merge for prepare/train
+    mlair_detected_dataset_name: str = _env("CV_MLAIR_DETECTED_DATASET", "detected")
+    mlair_not_detected_dataset_name: str = _env("CV_MLAIR_NOT_DETECTED_DATASET", "not-detected")
+    mlair_train_ready_dataset_name: str = _env("CV_MLAIR_TRAIN_READY_DATASET", "train-ready")
+    # Lineage: Hub complete ingests body.lineage. extra = POST only lineage_ingests[1:]; off | all
+    mlair_lineage_post_ingest: str = _env("CV_MLAIR_LINEAGE_POST_INGEST", "extra").strip().lower()
 
     video_extensions: frozenset[str] = frozenset(
         {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}

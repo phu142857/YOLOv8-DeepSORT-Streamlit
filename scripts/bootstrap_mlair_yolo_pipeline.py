@@ -25,7 +25,12 @@ from shared.settings import settings
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--required-size", type=int, default=100, help="Training policy required_size")
+    parser.add_argument(
+        "--required-size",
+        type=int,
+        default=settings.mlair_pipeline_required_size,
+        help="Training policy required_size (default: CV_MLAIR_PIPELINE_REQUIRED_SIZE)",
+    )
     parser.add_argument("--pipeline-id", default=settings.mlair_train_pipeline_id)
     parser.add_argument("--train-url", default="http://cv-api:8000/api/v1/mlair/train/execute")
     parser.add_argument(

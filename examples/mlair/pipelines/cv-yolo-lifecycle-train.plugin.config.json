@@ -2,14 +2,20 @@
   "inputs": [
     {
       "dataset": "cv-traffic-frames",
-      "required_size": 1
+      "required_size": 50
     }
   ],
   "tasks": [
     {
+      "id": "split",
+      "plugin": "cv_yolo_split",
+      "plugin_version": ">=0.1.0,<3.0.0"
+    },
+    {
       "id": "detect",
       "plugin": "cv_yolo_detect",
-      "plugin_version": ">=0.1.0,<3.0.0"
+      "plugin_version": ">=0.1.0,<3.0.0",
+      "depends_on": ["split"]
     },
     {
       "id": "prepare",

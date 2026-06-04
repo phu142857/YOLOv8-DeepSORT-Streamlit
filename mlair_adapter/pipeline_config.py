@@ -99,7 +99,7 @@ def cv_yolo_train_pipeline_config(
     dataset = dataset_logical_name or settings.mlair_dataset_name
     if mode == "plugin":
         return {
-            "inputs": [{"dataset": dataset, "required_size": 1}],
+            "inputs": [{"dataset": dataset, "required_size": settings.mlair_pipeline_required_size}],
             "tasks": [
                 {
                     "id": "yolo_train",
@@ -110,7 +110,7 @@ def cv_yolo_train_pipeline_config(
         }
     train_url = (cv_train_url or "http://cv-api:8000/api/v1/mlair/train/execute").rstrip("/")
     return {
-        "inputs": [{"dataset": dataset, "required_size": 1}],
+        "inputs": [{"dataset": dataset, "required_size": settings.mlair_pipeline_required_size}],
         "tasks": [
             {
                 "id": "yolo_train",

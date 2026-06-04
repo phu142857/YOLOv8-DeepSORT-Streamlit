@@ -2,7 +2,7 @@
 """
 MLAir external worker for CV lifecycle plugins (Phase B DAG).
 
-Capabilities: cv_yolo_detect, cv_yolo_prepare, cv_yolo_train, cv_yolo_eval, cv_yolo_gate, cv_hard_example_mine
+Capabilities: cv_yolo_split, cv_yolo_detect, cv_yolo_prepare, cv_yolo_train, cv_yolo_eval, cv_yolo_gate, cv_hard_example_mine
 """
 
 from __future__ import annotations
@@ -22,7 +22,10 @@ from mlair_adapter.torch_compat import apply_torch_checkpoint_compat
 
 apply_torch_checkpoint_compat()
 
+from mlair_adapter.base_client import MLAirClient
+from mlair_adapter.lineage_client import ingest_lineage_blocks
 from mlair_adapter.run_tracking_client import build_complete_task_body, build_fail_task_body
+from shared.settings import settings
 from mlair_adapter.task_log_client import TaskLogSink
 from mlair_adapter.worker_context import plugin_context_from_lease_task
 from mlair_adapter.worker_log_capture import capture_task_logs
@@ -34,10 +37,12 @@ from mlair_adapter.yolo_lifecycle import (
     run_hard_example_mine,
     run_legacy_monolithic_train,
     run_prepare,
+    run_split,
     run_train_step,
 )
 
 PLUGIN_HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "cv_yolo_split": run_split,
     "cv_yolo_detect": run_detect,
     "cv_yolo_prepare": run_prepare,
     "cv_yolo_train": lambda ctx: _dispatch_train(ctx),
@@ -47,6 +52,26 @@ PLUGIN_HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 }
 
 DEFAULT_CAPS = ",".join(PLUGIN_HANDLERS.keys())
+
+
+def _lineage_blocks_for_post_ingest(
+    complete_body: dict[str, Any],
+    blocks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Avoid duplicating block[0] when Hub already ingests ``complete_body['lineage']``."""
+    mode = settings.mlair_lineage_post_ingest
+    if mode in ("0", "false", "no", "off"):
+        return []
+    if mode in ("all", "full", "legacy"):
+        return blocks
+    on_complete = complete_body.get("lineage")
+    if not blocks:
+        return []
+    if not isinstance(on_complete, dict) or not (
+        on_complete.get("inputs") or on_complete.get("outputs")
+    ):
+        return blocks
+    return blocks[1:]
 
 
 def _dispatch_train(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -128,6 +153,28 @@ def main() -> None:
                     worker_id, result, plugin=plugin, usage_report=usage_bundle
                 )
                 post_json(task_url(base, tid, "complete"), token, body)
+
+                run_id = str(task.get("run_id") or result.get("run_id") or "")
+                lineage_blocks: list[dict[str, Any]] = []
+                raw_ingests = result.get("lineage_ingests")
+                if isinstance(raw_ingests, list):
+                    lineage_blocks = [b for b in raw_ingests if isinstance(b, dict)]
+                if not lineage_blocks:
+                    legacy = result.get("lineage")
+                    if isinstance(legacy, dict) and (legacy.get("inputs") or legacy.get("outputs")):
+                        lineage_blocks = [legacy]
+                post_blocks = _lineage_blocks_for_post_ingest(body, lineage_blocks)
+                if post_blocks and run_id:
+                    hub = MLAirClient(base_url=base, token=token)
+                    for ing_out in ingest_lineage_blocks(
+                        hub, run_id=run_id, task_id=tid, blocks=post_blocks
+                    ):
+                        print(
+                            f"lineage_ingest_post task_id={tid} run_id={run_id} "
+                            f"edges={ing_out.get('edges')} ingested={ing_out.get('ingested')}",
+                            flush=True,
+                        )
+
                 ru = usage_bundle.get("resource_usage") or {}
                 n_samples = len(usage_bundle.get("usage_samples") or [])
                 print(

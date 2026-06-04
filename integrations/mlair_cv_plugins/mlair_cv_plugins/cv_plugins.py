@@ -23,7 +23,34 @@ class CvYoloPreparePlugin:
         "inputs": {"dataset_version_id": "string", "model_id": "string"},
         "outputs": {"data_yaml": "string", "train_images": "number"},
         "ui_schema": None,
-        "lineage": {"inputs": ["dataset_version"], "outputs": ["yolo_dataset"]},
+        "lineage": {
+            "inputs": ["dataset_version_train_ready"],
+            "outputs": ["yolo_dataset"],
+        },
+    }
+
+    def validate(self, context: dict[str, Any]) -> bool:
+        _require(context, "dataset_version_id", "model_id")
+        return True
+
+
+class CvYoloSplitPlugin:
+    meta = {
+        "name": "cv_yolo_split",
+        "version": "0.2.0",
+        "engine_version": "1.0.0",
+        "inputs": {"dataset_version_id": "string", "model_id": "string"},
+        "outputs": {
+            "already_labeled": "number",
+            "not_labeled": "number",
+            "detected_dataset_version_id": "string",
+            "not_detected_dataset_version_id": "string",
+        },
+        "ui_schema": None,
+        "lineage": {
+            "inputs": ["dataset_version"],
+            "outputs": ["dataset_version_detected", "dataset_version_not_detected"],
+        },
     }
 
     def validate(self, context: dict[str, Any]) -> bool:
@@ -36,18 +63,21 @@ class CvYoloDetectPlugin:
         "name": "cv_yolo_detect",
         "version": "0.2.0",
         "engine_version": "1.0.0",
-        "inputs": {"dataset_version_id": "string", "model_id": "string"},
+        "inputs": {"model_id": "string"},
         "outputs": {
             "detected": "number",
-            "already_labeled": "number",
+            "train_dataset_version_id": "string",
             "skipped": "boolean",
         },
         "ui_schema": None,
-        "lineage": {"inputs": ["dataset_version", "production_model"], "outputs": ["job_detections"]},
+        "lineage": {
+            "inputs": ["dataset_version_detected", "dataset_version_not_detected"],
+            "outputs": ["dataset_version_train_ready"],
+        },
     }
 
     def validate(self, context: dict[str, Any]) -> bool:
-        _require(context, "dataset_version_id", "model_id")
+        _require(context, "model_id")
         return True
 
 

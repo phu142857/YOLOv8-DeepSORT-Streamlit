@@ -1,6 +1,6 @@
 # MLAir Phase B — Lifecycle pipeline (YOLO)
 
-Pipeline **`cv-yolo-lifecycle-train`** (DAG 5 bước) + **`cv-hard-example-mine`** (tùy chọn).
+Pipeline **`cv-yolo-lifecycle-train`** (DAG 6 bước: split → detect → prepare → train → eval → gate) + **`cv-hard-example-mine`** (tùy chọn).
 
 ## Lưu trữ trên container (volume Docker)
 
@@ -21,17 +21,20 @@ docker run --rm -v cv-mlair-stack_cv_workload_artifacts:/dst -v "$(pwd)/artifact
 ## DAG train
 
 ```text
-detect (cv_yolo_detect)     # chỉ frame thiếu detections.json(l)
-    → prepare (cv_yolo_prepare)
-    → train (cv_yolo_train)     # import stage staging
-    → eval (cv_yolo_eval)       # mAP50 trên val split
-    → gate (cv_yolo_gate)       # so với production; promote nếu pass
+cv-traffic-frames
+    → split (cv_yolo_split)       # check labeled; Hub detected + not-detected
+    → detect (cv_yolo_detect)     # YOLO chỉ not-detected; merge train-ready
+    → prepare (cv_yolo_prepare)   # train-ready version → data.yaml
+    → train (cv_yolo_train)       # import staging
+    → eval (cv_yolo_eval)         # mAP50 val
+    → gate (cv_yolo_gate)         # promote nếu pass
 ```
 
 | Task | Plugin | Việc làm |
 |------|--------|----------|
-| detect | `cv_yolo_detect` | YOLO trên frame thiếu label; skip frame đã có `detections.json(l)` |
-| prepare | `cv_yolo_prepare` | Tải dataset version, đọc job detections → `data.yaml` (pseudo-label fallback nếu bật) |
+| split | `cv_yolo_split` | Tải input manifest; tách labeled / chưa có detections; publish Hub `detected` + `not-detected`; lineage trên `complete` |
+| detect | `cv_yolo_detect` | Đọc 2 manifest từ split; YOLO chỉ `not-detected`; gộp `train-ready`; merge lineage (block 2 qua `POST .../lineage/ingest` nếu `CV_MLAIR_LINEAGE_POST_INGEST=extra`) |
+| prepare | `cv_yolo_prepare` | Tải **train-ready** version, đọc job detections → `data.yaml` (pseudo-label fallback nếu bật) |
 | train | `cv_yolo_train` | Ultralytics fine-tune, import `.pt` stage **staging** |
 | eval | `cv_yolo_eval` | `val()` checkpoint candidate → `mAP50` |
 | gate | `cv_yolo_gate` | `val()` production weights cùng val set; promote nếu `candidate >= prod + delta` |
@@ -61,14 +64,20 @@ CV_MLAIR_HARD_EXAMPLE_DATASET=cv-traffic-hard-examples
 CV_MLAIR_HARD_EXAMPLE_MAX_CONF=0.35
 CV_MLAIR_HARD_EXAMPLE_MAX_SCAN=500
 
-# Lifecycle detect (trước prepare)
+# Lifecycle split + detect (trước prepare)
 CV_MLAIR_DETECT_CONF=0.25
 CV_MLAIR_DETECT_MAX_FRAMES=0
+CV_MLAIR_DETECTED_DATASET=detected
+CV_MLAIR_NOT_DETECTED_DATASET=not-detected
+CV_MLAIR_TRAIN_READY_DATASET=train-ready
+CV_MLAIR_PIPELINE_REQUIRED_SIZE=50
 ```
+
+Pipeline input `required_size` và training policy mặc định **50** (khớp `target_threshold` trên Hub nếu dùng accumulation).
 
 `CV_MLAIR_DETECT_MAX_FRAMES=0` → dùng cùng cap `CV_MLAIR_TRAIN_MAX_FRAMES`.
 
-### Test detect local (không cần worker lease)
+### Test split + detect local (không cần worker lease)
 
 ```bash
 export CV_MLAIR_API_URL=http://localhost:8080
@@ -79,6 +88,7 @@ python scripts/run_cv_yolo_detect_local.py \
   --dataset-version-id <version-uuid> \
   --model-id <model-uuid> \
   --run-id local-detect-test
+# script chạy split rồi detect (giống 2 task pipeline)
 ```
 
 Sau bootstrap pipeline + plugin reload trên Hub:
@@ -89,7 +99,7 @@ curl -X POST "http://localhost:8080/v1/tenants/default/projects/default_project/
   -H "Authorization: Bearer admin-token" -d '{}'
 ```
 
-Worker: `scripts/mlair_cv_pipeline_worker.py` (capabilities = 6 plugin).
+Worker: `scripts/mlair_cv_pipeline_worker.py` (capabilities = 7 plugin lifecycle + hard-example mine).
 
 ## Triển khai stack
 
@@ -104,7 +114,7 @@ API image: `deploy/Dockerfile.mlair-api-cv-plugins` (cài `integrations/mlair_cv
 
 1. Model có **pipeline-mapping** → `cv-yolo-lifecycle-train`
 2. Dataset version **pinned** + readiness **READY**
-3. Run pipeline → 5 task trên worker (detect → prepare → train → eval → gate)
+3. Run pipeline → 6 task trên worker (split → detect → prepare → train → eval → gate)
 4. Gate pass → **promote production** + webhook → `weights/detection`
 
 ## Legacy
