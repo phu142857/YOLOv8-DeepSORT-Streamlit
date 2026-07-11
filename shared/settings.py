@@ -123,6 +123,11 @@ class Settings:
     mlair_prepare_fallback_pseudo: bool = _env_bool("CV_MLAIR_PREPARE_FALLBACK_PSEUDO", True)
     mlair_prepare_pseudo_confidence: float = float(_env("CV_MLAIR_PREPARE_PSEUDO_CONF", "0.25"))
     mlair_detect_confidence: float = float(_env("CV_MLAIR_DETECT_CONF", "0.25"))
+    # Auto-labeling (detect) teacher model. MUST be a strong general detector — the
+    # model selected for training may start from an untrained checkpoint and produce
+    # zero pseudo-labels. Defaults to the COCO-pretrained yolov8s on the host weights
+    # mount (survives `podman system reset`). Set to "" to reuse the run's base model.
+    mlair_detect_base_model_spec: str = _env("CV_MLAIR_DETECT_BASE_MODEL", "yolov8s/pretrained")
     # 0 = use CV_MLAIR_TRAIN_MAX_FRAMES cap (same as prepare/train pull)
     mlair_detect_max_frames: int = int(_env("CV_MLAIR_DETECT_MAX_FRAMES", "0"))
     # Lifecycle detect: split source → Hub datasets, merge for prepare/train

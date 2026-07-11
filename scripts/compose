@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Compose wrapper: honors .env, auto-includes GPU overlay unless CV_GPU_TRAIN=0.
+# Compose wrapper: honors .env, adds the GPU worker overlay unless CV_GPU_TRAIN=0.
+# MLAir runs from the prebuilt image `ml-air:latest` (see compose.yaml) — this wrapper
+# never references the ml-air source tree.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -15,26 +17,47 @@ if [[ -n "${COMPOSE_FILE:-}" ]]; then
   exec docker compose "$@"
 fi
 
+# Single switch in .env: CV_TRAIN_COMPUTE=gpu|cpu (sets worker image + compose overlay).
+# Per-var overrides (CV_GPU_TRAIN, CV_WORKER_IMAGE, …) still win if set before this runs.
+case "${CV_TRAIN_COMPUTE:-}" in
+  gpu)
+    export CV_GPU_TRAIN=auto
+    export CV_WORKER_IMAGE=cv-lifecycle-workload:gpu
+    export CV_WORKER_PYTORCH_WHEEL=cu124
+    export CV_MLAIR_TRAIN_DEVICE=auto
+    ;;
+  cpu)
+    export CV_GPU_TRAIN=0
+    export CV_WORKER_IMAGE=cv-lifecycle-workload:latest
+    export CV_WORKER_PYTORCH_WHEEL=cpu
+    export CV_MLAIR_TRAIN_DEVICE=cpu
+    ;;
+  "") ;;
+  *) echo "WARN: unknown CV_TRAIN_COMPUTE=$CV_TRAIN_COMPUTE (use gpu|cpu)" >&2 ;;
+esac
+
 gpu_train="${CV_GPU_TRAIN:-auto}"
 want_gpu=0
 case "$gpu_train" in
   1|true|yes) want_gpu=1 ;;
   0|false|no) want_gpu=0 ;;
-  auto)
-    if nvidia-smi &>/dev/null; then
-      want_gpu=1
-    fi
-    ;;
-  *)
-    echo "WARN: unknown CV_GPU_TRAIN=$gpu_train (use auto|1|0)" >&2
-    ;;
+  auto) if nvidia-smi &>/dev/null; then want_gpu=1; fi ;;
+  *) echo "WARN: unknown CV_GPU_TRAIN=$gpu_train (use auto|1|0)" >&2 ;;
 esac
 
-files=(docker-compose.yml)
+files=("$ROOT/compose.yaml")
 if [[ "$want_gpu" == "1" ]]; then
-  files+=(docker-compose.gpu.yml)
+  files+=("$ROOT/docker-compose.gpu.yml")
 fi
 
 export COMPOSE_FILE
 COMPOSE_FILE=$(IFS=:; echo "${files[*]}")
+
+# GPU worker references cv-lifecycle-workload:gpu; if only :latest was built, tag it.
+if [[ "$want_gpu" == "1" ]] && docker image inspect cv-lifecycle-workload:latest &>/dev/null; then
+  if ! docker image inspect "${CV_WORKER_IMAGE:-cv-lifecycle-workload:gpu}" &>/dev/null; then
+    docker tag cv-lifecycle-workload:latest "${CV_WORKER_IMAGE:-cv-lifecycle-workload:gpu}"
+  fi
+fi
+
 exec docker compose "$@"

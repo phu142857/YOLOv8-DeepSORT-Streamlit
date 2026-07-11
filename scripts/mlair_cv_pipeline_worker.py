@@ -8,6 +8,7 @@ Capabilities: cv_yolo_split, cv_yolo_detect, cv_yolo_prepare, cv_yolo_train, cv_
 from __future__ import annotations
 
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -24,12 +25,21 @@ apply_torch_checkpoint_compat()
 
 from mlair_adapter.base_client import MLAirClient
 from mlair_adapter.lineage_client import ingest_lineage_blocks
-from mlair_adapter.run_tracking_client import build_complete_task_body, build_fail_task_body
+from mlair_adapter.run_tracking_client import (
+    artifacts_from_plugin_result,
+    metrics_from_plugin_result,
+    normalize_usage_bundle_for_complete,
+)
 from shared.settings import settings
 from mlair_adapter.task_log_client import TaskLogSink
 from mlair_adapter.worker_context import plugin_context_from_lease_task
 from mlair_adapter.worker_log_capture import capture_task_logs
-from mlair_adapter.worker_task_runtime import post_json, run_handler_with_heartbeat, task_url
+from mlair_adapter.worker_task_runtime import (
+    TaskCancelled,
+    post_json,
+    run_handler_with_heartbeat,
+)
+from sdk.worker_client import post_task_complete_from_bundle, post_task_fail
 from mlair_adapter.yolo_lifecycle import (
     run_detect,
     run_eval,
@@ -92,13 +102,13 @@ def main() -> None:
         raise SystemExit("set MLAIR_WORKER_TOKEN")
     worker_id = (os.getenv("MLAIR_WORKER_ID") or "").strip()
     if not worker_id:
-        worker_id = (os.getenv("HOSTNAME") or "").strip() or "cv-lifecycle-worker"
+        worker_id = (os.getenv("HOSTNAME") or socket.gethostname() or "cv-lifecycle-worker").strip()
     caps = os.getenv("MLAIR_CAPABILITIES", DEFAULT_CAPS)
     capabilities = [c.strip() for c in caps.split(",") if c.strip()]
     lease_url = f"{base}/v1/tasks/lease"
     print(
         f"cv lifecycle worker id={worker_id} caps={capabilities} "
-        f"usage_monitor=on train_checkpoint_resolver=v2",
+        f"usage_monitor=sdk train_checkpoint_resolver=v2",
         flush=True,
     )
 
@@ -130,10 +140,12 @@ def main() -> None:
             print(f"leased task_id={tid} plugin={plugin}", flush=True)
             handler = PLUGIN_HANDLERS.get(plugin)
             if not handler:
-                post_json(
-                    task_url(base, tid, "fail"),
-                    token,
-                    build_fail_task_body(worker_id, f"unsupported_plugin:{plugin}"),
+                post_task_fail(
+                    tid,
+                    worker_id=worker_id,
+                    error=f"unsupported_plugin:{plugin}",
+                    token=token,
+                    base_url=base,
                 )
                 continue
 
@@ -149,10 +161,24 @@ def main() -> None:
                     result, usage_bundle = run_handler_with_heartbeat(
                         base, token, worker_id, tid, _run
                     )
-                body = build_complete_task_body(
-                    worker_id, result, plugin=plugin, usage_report=usage_bundle
+                result_lineage = result.get("lineage")
+                complete_lineage = (
+                    result_lineage
+                    if isinstance(result_lineage, dict)
+                    and (result_lineage.get("inputs") or result_lineage.get("outputs"))
+                    else None
                 )
-                post_json(task_url(base, tid, "complete"), token, body)
+                artifacts = artifacts_from_plugin_result(result, plugin=plugin)
+                post_task_complete_from_bundle(
+                    tid,
+                    worker_id=worker_id,
+                    usage_bundle=normalize_usage_bundle_for_complete(usage_bundle),
+                    metrics=metrics_from_plugin_result(result),
+                    artifacts=artifacts or None,
+                    lineage=complete_lineage,
+                    token=token,
+                    base_url=base,
+                )
 
                 run_id = str(task.get("run_id") or result.get("run_id") or "")
                 lineage_blocks: list[dict[str, Any]] = []
@@ -163,7 +189,9 @@ def main() -> None:
                     legacy = result.get("lineage")
                     if isinstance(legacy, dict) and (legacy.get("inputs") or legacy.get("outputs")):
                         lineage_blocks = [legacy]
-                post_blocks = _lineage_blocks_for_post_ingest(body, lineage_blocks)
+                post_blocks = _lineage_blocks_for_post_ingest(
+                    {"lineage": complete_lineage}, lineage_blocks
+                )
                 if post_blocks and run_id:
                     hub = MLAirClient(base_url=base, token=token)
                     for ing_out in ingest_lineage_blocks(
@@ -179,19 +207,27 @@ def main() -> None:
                 n_samples = len(usage_bundle.get("usage_samples") or [])
                 print(
                     f"complete task_id={tid} plugin={plugin} step={result.get('step')} "
-                    f"usage_samples={n_samples} cpu_percent_peak={ru.get('cpu_percent_peak')} "
+                    f"log_lines={log_sink.posted_lines} usage_samples={n_samples} "
+                    f"cpu_percent_peak={ru.get('cpu_percent_peak')} "
                     f"memory_mb_peak={ru.get('memory_mb_peak')} "
                     f"gpu_percent_peak={ru.get('gpu_percent_peak')} "
                     f"gpu_memory_mb_peak={ru.get('gpu_memory_mb_peak')}",
                     flush=True,
                 )
+            except TaskCancelled:
+                # MLAir already marked the task/run CANCELLED; don't post complete/fail.
+                print(f"cancelled task_id={tid} plugin={plugin} — aborted by cancel", flush=True)
+                continue
             except Exception as exc:
                 print(f"fail task_id={tid} plugin={plugin} err={exc}", flush=True)
                 try:
-                    post_json(
-                        task_url(base, tid, "fail"),
-                        token,
-                        build_fail_task_body(worker_id, str(exc), usage_report=usage_bundle or None),
+                    post_task_fail(
+                        tid,
+                        worker_id=worker_id,
+                        error=str(exc),
+                        usage_bundle=normalize_usage_bundle_for_complete(usage_bundle) or None,
+                        token=token,
+                        base_url=base,
                     )
                 except Exception:
                     pass

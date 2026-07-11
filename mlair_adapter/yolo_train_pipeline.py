@@ -14,7 +14,6 @@ import yaml
 
 from mlair_adapter.torch_compat import apply_torch_checkpoint_compat
 from mlair_adapter.train_device import resolve_train_device, run_ultralytics_train_with_device_policy
-from mlair_adapter.worker_task_runtime import capture_active_monitor_sample
 
 apply_torch_checkpoint_compat()
 
@@ -218,6 +217,41 @@ def _resolve_base_weights(context: dict[str, Any]) -> Path:
     return resolve_model_path(spec)
 
 
+def resolve_detect_teacher_weights(context: dict[str, Any]) -> Path:
+    """Base model for the auto-labeling (detect) step — a *strong general* detector.
+
+    Pseudo-labeling must NOT use the model being trained: when a run selects a model
+    whose checkpoint is untrained (fresh registry entry), it detects nothing and the
+    train-ready merge collapses to zero rows ("no frames with usable detections").
+    Instead resolve ``CV_MLAIR_DETECT_BASE_MODEL`` (default ``yolov8s/pretrained``),
+    which lives on the host ``weights/detection`` mount and therefore survives
+    ``podman system reset``. Falls back to the run's base model only if the teacher
+    spec is empty or cannot be resolved.
+    """
+    spec = str(settings.mlair_detect_base_model_spec or "").strip()
+    if spec:
+        try:
+            if is_registry_model(spec):
+                return ensure_registry_weights(registry_model_id(spec))
+            parsed = parse_model_spec(spec)
+            if parsed:
+                model, version = parsed
+                found = find_weights_in_dir(version_dir(settings.detection_model_dir, model, version))
+                if found is not None:
+                    logger.info("detect teacher weights: %s (spec=%s)", found, spec)
+                    return found
+            resolved = resolve_model_path(spec)
+            logger.info("detect teacher weights: %s (spec=%s)", resolved, spec)
+            return resolved
+        except Exception as exc:
+            logger.warning(
+                "detect teacher %r unresolved (%s); falling back to run base weights",
+                spec,
+                exc,
+            )
+    return _resolve_base_weights(context)
+
+
 def _pseudo_label_samples(
     samples: list[tuple[Path, str | None]],
     *,
@@ -400,16 +434,8 @@ def run_yolo_training(context: dict[str, Any], *, work_root: Path | None = None)
         verbose=True,
     )
     logger.info("YOLO train finished device=%s", train_device)
-    capture_active_monitor_sample()
 
     best_pt, save_dir = _resolve_train_checkpoint(model, results, work_dir)
-
-    model_client = ModelClient()
-    imported = model_client.import_version(
-        model_id,
-        best_pt,
-        stage=settings.mlair_train_import_stage,
-    )
 
     metrics = _metrics_from_train_results(results, model)
 
@@ -418,7 +444,7 @@ def run_yolo_training(context: dict[str, Any], *, work_root: Path | None = None)
         "model_id": model_id,
         "dataset_version_id": version_id,
         "checkpoint": str(best_pt),
-        "imported_version": imported,
+        "import_stage": settings.mlair_train_import_stage,
         "metrics": metrics,
         "train_images": n_train,
         "val_images": n_val,

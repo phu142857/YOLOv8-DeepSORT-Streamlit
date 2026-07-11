@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +29,7 @@ _spec.loader.exec_module(_step_mod)
 STEP_HANDLERS = _step_mod.STEP_HANDLERS
 _build_context = _step_mod._build_context
 _should_skip_step = _step_mod._should_skip_step
+_log_step_to_mlflow = _step_mod._log_step_to_mlflow
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -57,9 +58,19 @@ class Handler(BaseHTTPRequestHandler):
         )
         if _should_skip_step(step):
             out = {"ok": True, "skipped": True, "step": step}
+            baseline_run_id = str(body.get("baseline_run_id") or os.getenv("BASELINE_RUN_ID") or "baseline")
         else:
             ctx = _build_context(ns)
-            out = STEP_HANDLERS[step](ctx)
+            baseline_run_id = str(ctx.get("run_id") or body.get("baseline_run_id") or "baseline")
+            try:
+                out = STEP_HANDLERS[step](ctx)
+            except Exception as exc:
+                out = {"ok": False, "step": step, "error": str(exc)}
+        try:
+            _log_step_to_mlflow(baseline_run_id, step, out)
+        except Exception as exc:
+            print(f"mlflow step log failed ({step}): {exc}", flush=True)
+            out.setdefault("warnings", []).append(f"mlflow_log_failed: {exc}")
         payload = json.dumps(out, default=str).encode("utf-8")
         self.send_response(200 if out.get("ok") else 500)
         self.send_header("Content-Type", "application/json")
@@ -74,7 +85,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     port = int(os.getenv("BASELINE_RUNNER_PORT", "9191"))
     print(f"baseline-cv-runner listening on :{port}", flush=True)
-    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 
 if __name__ == "__main__":

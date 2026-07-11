@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -73,6 +74,8 @@ def _ensure_mlflow_run(baseline_run_id: str) -> str | None:
         return id_path.read_text(encoding="utf-8").strip()
 
     run_name = f"af-{baseline_run_id}"[:250]
+    if mlflow.active_run():
+        mlflow.end_run()
     run = mlflow.start_run(run_name=run_name)
     run_id = run.info.run_id
     id_path.write_text(run_id, encoding="utf-8")
@@ -84,6 +87,11 @@ def _ensure_mlflow_run(baseline_run_id: str) -> str | None:
     return run_id
 
 
+def _mlflow_metric_name(step: str, key: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_./: -]", "_", str(key))
+    return f"{step}.{safe}"
+
+
 def _log_step_to_mlflow(baseline_run_id: str, step: str, result: dict) -> None:
     run_id = _ensure_mlflow_run(baseline_run_id)
     if not run_id:
@@ -91,12 +99,14 @@ def _log_step_to_mlflow(baseline_run_id: str, step: str, result: dict) -> None:
     import mlflow
 
     mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+    if mlflow.active_run():
+        mlflow.end_run()
     with mlflow.start_run(run_id=run_id):
         mlflow.set_tag(f"task.{step}.status", "ok" if result.get("ok") else "fail")
         metrics = result.get("metrics") or {}
         for key, val in metrics.items():
             if isinstance(val, (int, float)):
-                mlflow.log_metric(f"{step}.{key}", float(val), step=0)
+                mlflow.log_metric(_mlflow_metric_name(step, key), float(val), step=0)
         if result.get("mAP50") is not None:
             mlflow.log_metric(f"{step}.mAP50", float(result["mAP50"]), step=0)
         if result.get("train_dataset_version_id"):

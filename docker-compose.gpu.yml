@@ -1,10 +1,19 @@
-# GPU runtime for mlair-cv-train-worker (auto-included from compose.yaml).
-# Image/build (cv-lifecycle-workload:gpu + cu124) live in docker-compose.yml — not duplicated here.
+# GPU runtime for mlair-cv-train-worker (included via scripts/compose when CV_GPU_TRAIN=1).
+# Image/build (cv-lifecycle-workload:gpu + cu124) is defined here — merged with all-in-one stack.
 #
 # Podman: nvidia-container-toolkit optional; explicit devices + libcuda mount below.
 
 services:
   mlair-cv-train-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTORCH_WHEEL: ${CV_WORKER_PYTORCH_WHEEL:-cu124}
+    image: ${CV_WORKER_IMAGE:-cv-lifecycle-workload:gpu}
+    pull_policy: never
+    # Ultralytics DataLoader + multiprocessing needs >64MB default /dev/shm
+    shm_size: "2gb"
     gpus: all
     devices:
       - /dev/nvidia0

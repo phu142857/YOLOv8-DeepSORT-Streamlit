@@ -162,36 +162,22 @@ Ghi đè: `CV_MLAIR_TRAIN_DEVICE=cpu` hoặc `0` / `cuda:0`.
 | **Logs** | `POST /v1/tasks/{id}/logs` → Redis run log stream | `capture_task_logs` |
 | **Metrics** | `complete_task` → `run_metrics` (`{plugin}.{key}`) | `metrics` trong body `complete` |
 | **Artifacts** | `complete_task` → `run_artifacts` | `artifacts[]` (`train/checkpoint`, `prepare/data.yaml`, …) |
-| **Tasks & resources** (live CPU/RAM) | `heartbeat` → `usage` (~3s) | `ResourceMonitor` sample + heartbeat **3s** |
-| **Task detail → Resource usage** | `complete`/`fail` → `resource_usage` + `usage_samples` | `build_complete_task_body` / `build_fail_task_body` |
+| **Tasks & resources** (CPU/RAM/GPU) | `heartbeat.usage` (~3s) + `complete.usage_samples`/`resource_usage` → MLAir lưu & tổng hợp | worker sample bằng SDK `sdk.resource_monitor` rồi gửi lên |
 
-Cần `ML_AIR_USAGE_TRACKING_ENABLED=1` trên API (compose AWS đã set). Sau deploy worker mới, chạy **run pipeline mới** — run cũ không có sample.
+External mode: MLAir **không tự đo** tài nguyên của worker container — nó chỉ lưu usage mà worker gửi lên. SDK `sdk.resource_monitor` chạy trong worker là nguồn đo; nếu worker không gửi, MLAir chỉ có `runtime_seconds`.
 
 MLAir (bản mới) persist tracking trong `complete_task` / `fail_task`; Hub poll tracking + `run.tracking.updated`.
 
-**Deploy (bắt buộc nếu Hub vẫn trống):** Image `ml-air-api:cv-workload` chỉ **cài plugin** trên base API — base phải là bản ml-air **có** `_persist_run_plugin_tracking` + `POST /tasks/.../logs`.
+**Deploy:** MLAir chạy thuần từ image `ml-air:latest` (service `mlair` trong `compose.yaml`),
+giao tiếp qua network `http://mlair:8080`. Image này (do project ml-air build) phải **có sẵn
+plugin cv_yolo_*** đã đăng ký và `_persist_run_plugin_tracking` + `POST /tasks/.../logs`.
+Repo YOLO chỉ tiêu thụ tag image + cài SDK từ `vendor/mlair-*.whl`; không build lại lõi MLAir.
 
 ```bash
-# Trong ../ml-air (cùng lệnh bạn đang dùng):
-cd ../ml-air
-docker build -t ml-air-api:local -f api/Dockerfile .
-docker build -t ml-air-scheduler:local -f scheduler/Dockerfile .
-docker build -t ml-air-executor:local -f executor/Dockerfile .
-docker build -t ml-air-frontend:local -f frontend/Dockerfile .
-docker build -t ml-air-realtime:local -f realtime/Dockerfile .
-
-# Trong repo CV — overlay plugin lên ml-air-api:local:
-cd ../YOLOv8-DeepSORT-Streamlit
-MLAIR_API_IMAGE=ml-air-api:local docker compose build api
-docker compose up -d --force-recreate api scheduler executor realtime frontend mlair-cv-train-worker
-
-docker exec ml-air-api python -c "from app.domains.orchestration import worker_task_service as w; print('tracking_ok', hasattr(w,'_persist_run_plugin_tracking'))"
-# phải in: tracking_ok True
+docker compose up -d              # mlair (image) + cv-api/worker/ui (build từ repo YOLO)
+curl -fsS http://localhost:8080/health
+docker exec mlair python -c "from app.domains.orchestration import worker_task_service as w; print('tracking_ok', hasattr(w,'_persist_run_plugin_tracking'))"
 ```
-
-Hoặc một lệnh: `./scripts/build_mlair_local_images.sh` (build 5 image + `api` + CV worker).
-
-Compose mặc định dùng `ml-air-*:local`, `pull_policy: missing` — không kéo GHCR đè bản local.
 
 Sau đó chạy **pipeline run mới** (run cũ không có dữ liệu tracking trong DB).
 
@@ -201,7 +187,7 @@ MLAir (API + Hub mới) ghi log qua `POST /v1/tasks/{task_id}/logs` → Redis `m
 
 Worker CV (`mlair_cv_pipeline_worker`) tee stdout/stderr + logging Ultralytics vào API đó khi task `RUNNING`.
 
-Cần **ml-air-api:local** (hoặc `cv-workload` build từ base đó) + **ml-air-frontend:local**. Sau đó:
+Cần **ml-air-api:latest** (hoặc `cv-workload` build từ base đó) + **ml-air-frontend:latest**. Sau đó:
 
 ```bash
 docker compose build cv-api mlair-cv-train-worker

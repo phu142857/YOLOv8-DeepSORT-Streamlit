@@ -55,21 +55,21 @@ if [[ "$MLAIR_IMAGE_SOURCE" == "local" ]]; then
     exit 1
   fi
   cd "$MLAIR_SRC"
-  docker build -t ml-air-api:local -f api/Dockerfile .
-  docker build -t ml-air-scheduler:local -f scheduler/Dockerfile .
-  docker build -t ml-air-executor:local -f executor/Dockerfile .
-  docker build -t ml-air-frontend:local -f frontend/Dockerfile \
+  docker build -t ml-air-api:latest -f api/Dockerfile .
+  docker build -t ml-air-scheduler:latest -f scheduler/Dockerfile .
+  docker build -t ml-air-executor:latest -f executor/Dockerfile .
+  docker build -t ml-air-frontend:latest -f frontend/Dockerfile \
     --build-arg NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}" \
     --build-arg NEXT_PUBLIC_MLAIR_REALTIME_WS="${NEXT_PUBLIC_MLAIR_REALTIME_WS:-}" \
     .
-  docker build -t ml-air-realtime:local -f realtime/Dockerfile .
+  docker build -t ml-air-realtime:latest -f realtime/Dockerfile .
 
-  tag_push ml-air-api ml-air-api:local
-  tag_push ml-air-scheduler ml-air-scheduler:local
-  tag_push ml-air-executor ml-air-executor:local
-  tag_push ml-air-frontend ml-air-frontend:local
-  tag_push ml-air-realtime ml-air-realtime:local
-  build_cv_overlay_and_push "ml-air-api:local"
+  tag_push ml-air-api ml-air-api:latest
+  tag_push ml-air-scheduler ml-air-scheduler:latest
+  tag_push ml-air-executor ml-air-executor:latest
+  tag_push ml-air-frontend ml-air-frontend:latest
+  tag_push ml-air-realtime ml-air-realtime:latest
+  build_cv_overlay_and_push "ml-air-api:latest"
 else
   echo "==> MLAIR_IMAGE_SOURCE=ghcr — pull MLAir from ${MLAIR_REGISTRY} (tag ${MLAIR_IMAGE_TAG})"
   for svc in api scheduler executor realtime frontend; do

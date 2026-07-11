@@ -18,7 +18,6 @@ from mlair_adapter.model_client import ModelClient
 from mlair_adapter.model_sync import ModelSyncService
 from mlair_adapter.run_workspace import load_state, require_keys, save_state, workspace_dir
 from mlair_adapter.train_device import resolve_train_device, run_ultralytics_train_with_device_policy
-from mlair_adapter.worker_task_runtime import capture_active_monitor_sample
 from mlair_adapter.yolo_detect import run_yolo_detect_merge
 from mlair_adapter.yolo_split import run_yolo_split
 from mlair_adapter.yolo_train_pipeline import (
@@ -204,7 +203,7 @@ def run_prepare(context: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_train_step(context: dict[str, Any]) -> dict[str, Any]:
-    """Fine-tune YOLO; import registry version as staging (not production)."""
+    """Fine-tune YOLO; MLAir Hub registers the checkpoint on task complete."""
     run_id, model_id, version_id = _context_ids(context)
     state = load_state(run_id)
     require_keys(state, ("data_yaml", "work_dir"), step="train")
@@ -229,13 +228,10 @@ def run_train_step(context: dict[str, Any]) -> dict[str, Any]:
         **lifecycle_train_extra_kwargs(work_dir),
     )
     logger.info("lifecycle train finished device=%s", train_device)
-    capture_active_monitor_sample()
 
     best_pt, save_dir = _resolve_train_checkpoint(model, results, work_dir)
 
     import_stage = settings.mlair_lifecycle_import_stage
-    imported = ModelClient().import_version(model_id, best_pt, stage=import_stage)
-    version_num = int(imported.get("version") or 0)
     train_metrics = _metrics_from_train_results(results, model)
     logger.info("train checkpoint=%s save_dir=%s", best_pt, save_dir)
 
@@ -243,7 +239,6 @@ def run_train_step(context: dict[str, Any]) -> dict[str, Any]:
         run_id,
         {
             "checkpoint": str(best_pt),
-            "imported_version": version_num,
             "import_stage": import_stage,
             "train_metrics": train_metrics,
             "train_ok": True,
@@ -254,7 +249,6 @@ def run_train_step(context: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "step": "train",
         "checkpoint": str(best_pt),
-        "imported_version": version_num,
         "import_stage": import_stage,
         "metrics": train_metrics,
         "train_images": state.get("n_train"),
@@ -270,10 +264,16 @@ def run_eval(context: dict[str, Any]) -> dict[str, Any]:
 
     ckpt = Path(str(state["checkpoint"]))
     data_yaml = str(state["data_yaml"])
+    work_dir = Path(str(state.get("work_dir") or workspace_dir(run_id)))
     eval_device = resolve_train_device(batch=settings.mlair_train_batch)
     logger.info("lifecycle eval device=%s", eval_device)
-    metrics = YOLO(str(ckpt)).val(data=data_yaml, device=eval_device, verbose=False)
-    capture_active_monitor_sample()
+    metrics = YOLO(str(ckpt)).val(
+        data=data_yaml,
+        device=eval_device,
+        verbose=False,
+        project=str(work_dir / "runs"),
+        imgsz=settings.mlair_train_imgsz,
+    )
     map50 = _extract_map50(metrics)
     eval_out = {
         "mAP50": map50,
@@ -285,21 +285,33 @@ def run_eval(context: dict[str, Any]) -> dict[str, Any]:
         }
 
     save_state(run_id, {"eval_map50": map50, "eval_metrics": eval_out, "eval_ok": True})
+    imported_version = _resolve_registered_version(model_id, run_id)
     return {
         "ok": True,
         "step": "eval",
         "model_id": model_id,
         "mAP50": map50,
         "metrics": eval_out.get("metrics") or {},
-        "imported_version": state.get("imported_version"),
+        "imported_version": imported_version,
     }
+
+
+def _resolve_registered_version(model_id: str, run_id: str) -> int:
+    row = ModelClient().find_latest_version(model_id, run_id=run_id)
+    if not row:
+        raise RuntimeError(f"registered model version not found for run_id={run_id}")
+    version_num = int(row.get("version") or 0)
+    if version_num < 1:
+        raise RuntimeError(f"invalid registered model version for run_id={run_id}")
+    return version_num
 
 
 def run_gate(context: dict[str, Any]) -> dict[str, Any]:
     """Compare candidate vs production on same val split; promote if improved."""
     run_id, model_id, _version_id = _context_ids(context)
     state = load_state(run_id)
-    require_keys(state, ("checkpoint", "data_yaml", "imported_version"), step="gate")
+    require_keys(state, ("checkpoint", "data_yaml"), step="gate")
+    imported_version = _resolve_registered_version(model_id, run_id)
 
     data_yaml = str(state["data_yaml"])
     candidate_map = state.get("eval_map50")
@@ -309,9 +321,15 @@ def run_gate(context: dict[str, Any]) -> dict[str, Any]:
 
     prod_weights = _resolve_base_weights({**context, "model_id": model_id})
     gate_device = resolve_train_device(batch=settings.mlair_train_batch)
+    work_dir = Path(str(state.get("work_dir") or workspace_dir(run_id)))
     logger.info("lifecycle gate eval device=%s", gate_device)
-    prod_metrics = YOLO(str(prod_weights)).val(data=data_yaml, device=gate_device, verbose=False)
-    capture_active_monitor_sample()
+    prod_metrics = YOLO(str(prod_weights)).val(
+        data=data_yaml,
+        device=gate_device,
+        verbose=False,
+        project=str(work_dir / "runs"),
+        imgsz=settings.mlair_train_imgsz,
+    )
     prod_map = _extract_map50(prod_metrics)
 
     min_delta = settings.mlair_gate_min_map_delta
@@ -326,18 +344,17 @@ def run_gate(context: dict[str, Any]) -> dict[str, Any]:
         "candidate_map50": candidate_map,
         "production_map50": prod_map,
         "min_delta": min_delta,
-        "imported_version": state.get("imported_version"),
+        "imported_version": imported_version,
     }
-    save_state(run_id, {"gate": gate_result, "gate_ok": passed})
+    save_state(run_id, {"gate": gate_result, "gate_ok": passed, "imported_version": imported_version})
 
     promoted: dict[str, Any] | None = None
     if passed and settings.mlair_lifecycle_auto_promote:
-        version_num = int(state["imported_version"])
-        promoted = ModelClient().promote(model_id, version_num, stage=settings.mlair_promote_stage)
+        promoted = ModelClient().promote(model_id, imported_version, stage=settings.mlair_promote_stage)
         gate_result["promoted"] = promoted
         if settings.mlair_sync_on_hub_promote:
             try:
-                ModelSyncService().apply_mlair_promotion_to_local(model_id, version_num)
+                ModelSyncService().apply_mlair_promotion_to_local(model_id, imported_version)
             except Exception as exc:
                 logger.warning("post-promote local sync failed: %s", exc)
 

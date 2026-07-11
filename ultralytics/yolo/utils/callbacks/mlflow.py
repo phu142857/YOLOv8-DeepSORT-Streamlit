@@ -19,6 +19,9 @@ def on_pretrain_routine_end(trainer):
     """Logs training parameters to MLflow."""
     global mlflow, run, run_id, experiment_name
 
+    if os.environ.get('BASELINE_RUN_ID'):
+        return
+
     if os.environ.get('MLFLOW_TRACKING_URI') is None:
         mlflow = None
 
@@ -47,6 +50,8 @@ def on_pretrain_routine_end(trainer):
 
 def on_fit_epoch_end(trainer):
     """Logs training metrics to Mlflow."""
+    if os.environ.get('BASELINE_RUN_ID'):
+        return
     if mlflow:
         metrics_dict = {f"{re.sub('[()]', '', k)}": float(v) for k, v in trainer.metrics.items()}
         run.log_metrics(metrics=metrics_dict, step=trainer.epoch)
@@ -54,14 +59,11 @@ def on_fit_epoch_end(trainer):
 
 def on_train_end(trainer):
     """Called at end of train loop to log model artifact info."""
+    if os.environ.get('BASELINE_RUN_ID'):
+        return
     if mlflow:
-        root_dir = Path(__file__).resolve().parents[3]
-        run.log_artifact(trainer.last)
-        run.log_artifact(trainer.best)
-        run.pyfunc.log_model(artifact_path=experiment_name,
-                             code_path=[str(root_dir)],
-                             artifacts={'model_path': str(trainer.save_dir)},
-                             python_model=run.pyfunc.PythonModel())
+        run.log_artifact(str(trainer.last))
+        run.log_artifact(str(trainer.best))
 
 
 callbacks = {

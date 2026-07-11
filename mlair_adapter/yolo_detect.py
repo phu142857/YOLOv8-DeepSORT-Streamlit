@@ -87,11 +87,11 @@ def _run_inference_on_missing(
     store: ArtifactStore,
     client: Any,
 ) -> tuple[int, int, int, str, float]:
-    from mlair_adapter.yolo_train_pipeline import _resolve_base_weights
+    from mlair_adapter.yolo_train_pipeline import resolve_detect_teacher_weights
     from inference.engine import load_model, predict_frame
     from shared.image_io import load_image_bgr
 
-    weights = _resolve_base_weights(context)
+    weights = resolve_detect_teacher_weights(context)
     model = load_model(str(weights))
     conf = settings.mlair_detect_confidence
 
@@ -100,8 +100,11 @@ def _run_inference_on_missing(
     failed = 0
     empty = 0
 
+    from mlair_adapter.worker_task_runtime import raise_if_cancelled
+
     try:
         for row in missing:
+            raise_if_cancelled()
             frame_index = str(row.get("frame_index") or "").strip()
             job_id = str(row.get("job_id") or "").strip()
             if not frame_index:

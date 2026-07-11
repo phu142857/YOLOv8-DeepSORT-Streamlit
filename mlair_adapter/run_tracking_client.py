@@ -1,8 +1,61 @@
-"""Build MLAir ``POST /tasks/{id}/complete`` payload (metrics + artifacts)."""
+"""Extract MLAir task metrics + artifacts from CV plugin results.
+
+Resource usage for external tasks is sampled in-worker by the official SDK
+(``sdk.resource_monitor``) and sent via
+``sdk.worker_client.post_task_complete_from_bundle`` / ``post_task_fail`` — MLAir
+cannot measure a separate worker container itself. This module only maps plugin
+results to Contract metrics/artifacts.
+"""
 
 from __future__ import annotations
 
 from typing import Any
+
+# Per-sample fields for Hub usage timeline chart.
+_V1_SAMPLE_KEYS = (
+    "sampled_at",
+    "cpu_percent",
+    "memory_mb",
+    "gpu_util_percent",
+    "gpu_memory_mb",
+    "network_rx_bytes",
+    "network_tx_bytes",
+    "gpu_power_w",
+    "gpu_temp_c",
+    "device_id",
+)
+
+
+def normalize_usage_bundle_for_complete(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Contract v1 complete payload — peaks + timeline samples without duplicate mirrors.
+
+    MLAir's ``contract_complete_resource_usage`` merges legacy ingest fields with v1
+    peaks (``duration_ms`` + ``duration_seconds``, ``memory_rss_kb`` + ``memory_mb_peak``).
+    Hub task detail may render both; drop redundant legacy mirrors when the v1 peak
+    is present. Samples are trimmed to contract keys so timeline series stay consistent.
+    """
+    from sdk.usage_contract import contract_complete_resource_usage
+
+    raw_ru = bundle.get("resource_usage") if isinstance(bundle.get("resource_usage"), dict) else {}
+    samples = bundle.get("usage_samples") if isinstance(bundle.get("usage_samples"), list) else []
+    report = {"resource_usage": raw_ru, "usage_samples": samples}
+    ru = contract_complete_resource_usage(report)
+
+    # Drop legacy mirrors when v1 peak exists (avoids duplicate cards in Hub).
+    if ru.get("duration_seconds") is not None:
+        ru.pop("duration_ms", None)
+    if ru.get("memory_mb_peak") is not None:
+        ru.pop("memory_rss_kb", None)
+
+    clean_samples: list[dict[str, Any]] = []
+    for s in samples:
+        if not isinstance(s, dict):
+            continue
+        row = {k: s[k] for k in _V1_SAMPLE_KEYS if s.get(k) is not None}
+        if row:
+            clean_samples.append(row)
+
+    return {"resource_usage": ru, "usage_samples": clean_samples}
 
 
 def metrics_from_plugin_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -44,46 +97,3 @@ def artifacts_from_plugin_result(result: dict[str, Any], *, plugin: str) -> list
         items.append({"path": f"{step}/workspace", "uri": f"file://{workspace}"})
 
     return items
-
-
-def _attach_usage_report(body: dict[str, Any], usage_report: dict[str, Any] | None) -> None:
-    if not isinstance(usage_report, dict):
-        return
-    ru = usage_report.get("resource_usage")
-    if isinstance(ru, dict) and ru:
-        body["resource_usage"] = ru
-    samples = usage_report.get("usage_samples")
-    if isinstance(samples, list) and samples:
-        body["usage_samples"] = samples
-
-
-def build_complete_task_body(
-    worker_id: str,
-    result: dict[str, Any],
-    *,
-    plugin: str,
-    usage_report: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "worker_id": worker_id,
-        "metrics": metrics_from_plugin_result(result),
-    }
-    artifacts = artifacts_from_plugin_result(result, plugin=plugin)
-    if artifacts:
-        body["artifacts"] = artifacts
-    lineage = result.get("lineage")
-    if isinstance(lineage, dict) and (lineage.get("inputs") or lineage.get("outputs")):
-        body["lineage"] = lineage
-    _attach_usage_report(body, usage_report)
-    return body
-
-
-def build_fail_task_body(
-    worker_id: str,
-    error: str,
-    *,
-    usage_report: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    body: dict[str, Any] = {"worker_id": worker_id, "error": error}
-    _attach_usage_report(body, usage_report)
-    return body

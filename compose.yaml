@@ -1,11 +1,294 @@
-# Default Compose entry point — `docker compose` loads this file automatically.
-# Merges GPU device mounts for mlair-cv-train-worker (cv-api stays on CPU image).
+# MLAir-as-a-service (like an external MLflow server) + YOLO CV workload.
 #
-# CPU-only host (no NVIDIA):
-#   COMPOSE_FILE=docker-compose.yml CV_GPU_TRAIN=0 CV_WORKER_IMAGE=cv-lifecycle-workload:latest CV_WORKER_PYTORCH_WHEEL=cpu docker compose up -d
+#   docker compose up -d
+#
+# MLAir runs from `ml-air-cv:latest` — a thin image derived FROM the prebuilt
+# `ml-air:latest` (all-in-one: API + Hub + realtime + Postgres + Redis) that adds ONLY
+# YOLO's lightweight cv_yolo_* plugin CONTRACTS so server-side pipeline validation passes
+# (see Dockerfile.mlair-cv). ml-air:latest stays pure; we never touch the ml-air source.
+# YOLO services are pure clients that talk to MLAir over the network (http://mlair:8080).
+# The MLAir SDK is installed into the CV image via the vendored wheel (vendor/mlair-*.whl,
+# exported by ml-air packaging) — see Dockerfile.
+#
+# GPU training: ./scripts/compose up -d --build   (adds docker-compose.gpu.yml overlay)
 
-name: cv-mlair-stack
+name: mlair-cv
 
-include:
-  - docker-compose.yml
-  - docker-compose.gpu.yml
+services:
+  mlair:
+    # Derived image = ml-air:latest + YOLO's lightweight cv_yolo_* plugin CONTRACTS
+    # (server-side pipeline validation needs the entry points). See Dockerfile.mlair-cv.
+    # ml-air:latest itself stays pure; we only layer YOLO's own package onto it.
+    build:
+      context: .
+      dockerfile: Dockerfile.mlair-cv
+      args:
+        MLAIR_BASE_IMAGE: ${MLAIR_BASE_IMAGE:-ml-air:latest}
+    image: ${MLAIR_IMAGE:-ml-air-cv:latest}
+    pull_policy: never
+    container_name: mlair
+    ports:
+      - "${MLAIR_PORT:-8080}:8080"
+    environment:
+      ML_AIR_TRACKING_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
+      ML_AIR_JWT_HS256_SECRET: ${ML_AIR_JWT_HS256_SECRET:-mlair-dev-jwt-secret-32bytes-minimum-key}
+      # External execution: YOLO worker leases tasks and reports usage over the API.
+      ML_AIR_TASK_EXECUTION_MODE: ${ML_AIR_TASK_EXECUTION_MODE:-external}
+      ML_AIR_TASK_LEASE_SECONDS: ${ML_AIR_TASK_LEASE_SECONDS:-300}
+      ML_AIR_SKIP_APPROVAL_FOR_PROMOTE: ${ML_AIR_SKIP_APPROVAL_FOR_PROMOTE:-1}
+      ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK: ${ML_AIR_READINESS_ALLOW_LEGACY_FALLBACK:-1}
+      ML_AIR_REQUIRE_DECLARED_DATASET_INPUTS: ${ML_AIR_REQUIRE_DECLARED_DATASET_INPUTS:-1}
+      ML_AIR_STRICT_DATASET_VERSION_REQUIRED: ${ML_AIR_STRICT_DATASET_VERSION_REQUIRED:-1}
+      ML_AIR_STRICT_DATASET_VERSION_ALL_POST_RUNS: ${ML_AIR_STRICT_DATASET_VERSION_ALL_POST_RUNS:-1}
+      ML_AIR_USAGE_TRACKING_ENABLED: ${ML_AIR_USAGE_TRACKING_ENABLED:-1}
+      ML_AIR_RESOURCE_MONITOR_ENABLED: ${ML_AIR_RESOURCE_MONITOR_ENABLED:-1}
+      ML_AIR_RESOURCE_SAMPLE_INTERVAL: ${ML_AIR_RESOURCE_SAMPLE_INTERVAL:-1}
+      ML_AIR_RESOURCE_FLUSH_INTERVAL: ${ML_AIR_RESOURCE_FLUSH_INTERVAL:-1}
+      ML_AIR_EVENT_OUTBOX: ${ML_AIR_EVENT_OUTBOX:-1}
+      ML_AIR_EVENT_OUTBOX_DRAIN_INTERVAL_SEC: ${ML_AIR_EVENT_OUTBOX_DRAIN_INTERVAL_SEC:-5}
+      ML_AIR_EVENT_STREAM: ${ML_AIR_EVENT_STREAM:-1}
+      ML_AIR_EVENT_STREAM_GLOBAL_FANOUT: ${ML_AIR_EVENT_STREAM_GLOBAL_FANOUT:-1}
+      ML_AIR_EXECUTION_PROJECTION: ${ML_AIR_EXECUTION_PROJECTION:-1}
+      ML_AIR_OTEL_ENABLED: ${ML_AIR_OTEL_ENABLED:-0}
+      ML_AIR_ENVIRONMENT: ${ML_AIR_ENVIRONMENT:-development}
+      ML_AIR_GRAFANA_URL: ${ML_AIR_GRAFANA_URL:-http://localhost:33000}
+      ML_AIR_RUNTIME_REALTIME_BASE_URL: ${ML_AIR_RUNTIME_REALTIME_BASE_URL:-ws://localhost:8080/ws}
+      ML_AIR_RUNTIME_REALTIME_DEFAULT_URL: ${ML_AIR_RUNTIME_REALTIME_DEFAULT_URL:-ws://localhost:8080/ws}
+    volumes:
+      - mlair_pgdata:/var/lib/postgresql/data
+      - mlair_dataset_artifacts:/mlair/artifacts/datasets
+      - mlair_model_artifacts:/mlair/artifacts/models
+    expose:
+      - "9102"
+      - "9103"
+      - "9104"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+    depends_on:
+      minio:
+        condition: service_started
+    restart: unless-stopped
+    networks: [mlairnet]
+
+  minio:
+    image: minio/minio:latest
+    container_name: ml-air-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniopassword}
+    ports:
+      - "${ML_AIR_MINIO_API_PORT:-9000}:9000"
+      - "${ML_AIR_MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - mlair_minio:/data
+    restart: unless-stopped
+    networks: [mlairnet]
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: ml-air-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../ml-air/deploy/monitoring/alerts:/etc/prometheus/alerts:ro
+    ports:
+      - "${ML_AIR_PROMETHEUS_PORT:-39090}:9090"
+    depends_on:
+      - mlair
+    restart: unless-stopped
+    networks: [mlairnet]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: ml-air-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "${GF_USERS_ALLOW_SIGN_UP:-false}"
+    volumes:
+      - ../ml-air/deploy/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../ml-air/deploy/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../ml-air/deploy/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${ML_AIR_GRAFANA_PORT:-33000}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks: [mlairnet]
+
+  # Prepare shared artifact volumes (perms + cv-artifact subdirs) for the CV containers.
+  mlair-artifact-init:
+    image: docker.io/library/alpine:3.20
+    user: "0:0"
+    volumes:
+      - mlair_dataset_artifacts:/datasets
+      - mlair_model_artifacts:/models
+      - cv_workload_artifacts:/cv-artifacts
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /datasets /models /cv-artifacts/jobs /cv-artifacts/uploads /cv-artifacts/mlair_pipeline_runs
+        mkdir -p /datasets/cv-runtime-frames
+        chown -R 1000:1000 /datasets /models /cv-artifacts
+    restart: "no"
+    networks: [mlairnet]
+
+  cv-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTORCH_WHEEL: ${PYTORCH_WHEEL:-cpu}
+    image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
+    container_name: cv-lifecycle-api
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    environment:
+      PYTHONPATH: /app
+      CV_ARTIFACT_ROOT: /app/artifacts
+      CV_API_BASE_URL: http://cv-api:8000
+      MLAIR_API_BASE_URL: http://mlair:8080
+      CV_MLAIR_API_URL: http://mlair:8080
+      CV_MLAIR_HUB_URL: http://localhost:${MLAIR_PORT:-8080}
+      ML_AIR_TRACKING_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
+      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN:-admin-token}
+      CV_MLAIR_TENANT: ${CV_MLAIR_TENANT:-default}
+      CV_MLAIR_PROJECT: ${CV_MLAIR_PROJECT:-default_project}
+      CV_MLAIR_DATASET_NAME: ${CV_MLAIR_DATASET_NAME:-cv-traffic-frames}
+      CV_MLAIR_PIPELINE_REQUIRED_SIZE: ${CV_MLAIR_PIPELINE_REQUIRED_SIZE:-50}
+      CV_MLAIR_AUTO_INGEST: ${CV_MLAIR_AUTO_INGEST:-1}
+      CV_MLAIR_AUTO_MATERIALIZE: ${CV_MLAIR_AUTO_MATERIALIZE:-0}
+      CV_MLAIR_MODEL_ID: ${CV_MLAIR_MODEL_ID:-}
+      CV_MLAIR_AUTO_TRAIN: ${CV_MLAIR_AUTO_TRAIN:-0}
+      CV_MLAIR_TRAIN_PIPELINE_ID: ${CV_MLAIR_TRAIN_PIPELINE_ID:-cv-yolo-lifecycle-train}
+      CV_MLAIR_PIPELINE_MODE: ${CV_MLAIR_PIPELINE_MODE:-plugin}
+      CV_MLAIR_LIFECYCLE_IMPORT_STAGE: ${CV_MLAIR_LIFECYCLE_IMPORT_STAGE:-staging}
+      CV_MLAIR_LIFECYCLE_AUTO_PROMOTE: ${CV_MLAIR_LIFECYCLE_AUTO_PROMOTE:-1}
+      CV_MLAIR_GATE_MIN_MAP_DELTA: ${CV_MLAIR_GATE_MIN_MAP_DELTA:-0.0}
+      CV_MLAIR_BOOTSTRAP_PIPELINE: ${CV_MLAIR_BOOTSTRAP_PIPELINE:-1}
+      CV_MLAIR_TRAIN_CALLBACK_TOKEN: ${CV_MLAIR_TRAIN_CALLBACK_TOKEN:-admin-token}
+      CV_MLAIR_PROMOTE_WEBHOOK_TOKEN: ${CV_MLAIR_PROMOTE_WEBHOOK_TOKEN:-admin-token}
+      CV_MLAIR_SYNC_ON_HUB_PROMOTE: ${CV_MLAIR_SYNC_ON_HUB_PROMOTE:-1}
+      CV_MLAIR_TRAIN_EPOCHS: ${CV_MLAIR_TRAIN_EPOCHS:-10}
+      CV_MLAIR_AUTO_PROMOTE: ${CV_MLAIR_AUTO_PROMOTE:-0}
+      CV_MLAIR_AUTO_SYNC_MODELS: ${CV_MLAIR_AUTO_SYNC_MODELS:-1}
+      CV_MLAIR_SYNC_ON_STARTUP: ${CV_MLAIR_SYNC_ON_STARTUP:-1}
+      CV_MLAIR_SYNC_AFTER_TRAIN: ${CV_MLAIR_SYNC_AFTER_TRAIN:-1}
+      CV_MLAIR_SYNC_INTERVAL_SEC: ${CV_MLAIR_SYNC_INTERVAL_SEC:-300}
+      CV_MLAIR_REGISTRY_RESYNC_SECONDS: ${CV_MLAIR_REGISTRY_RESYNC_SECONDS:-120}
+      CV_MLAIR_REGISTRY_SYNC_AT_STARTUP: ${CV_MLAIR_REGISTRY_SYNC_AT_STARTUP:-1}
+      CV_MLAIR_DISK_SYNC_MODE: ${CV_MLAIR_DISK_SYNC_MODE:-metadata}
+      CV_MLAIR_DISK_IMPORT_ALL_VERSIONS: ${CV_MLAIR_DISK_IMPORT_ALL_VERSIONS:-0}
+      CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL: ${CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL:-1}
+      CV_MLAIR_MODEL_ARTIFACT_MOUNT: /mlair/artifacts
+      CV_MLAIR_PERSIST_INGEST_FRAMES: ${CV_MLAIR_PERSIST_INGEST_FRAMES:-0}
+      CV_PERSIST_JOBS: ${CV_PERSIST_JOBS:-1}
+    volumes:
+      - cv_workload_artifacts:/app/artifacts
+      - ./weights:/app/weights
+      - mlair_model_artifacts:/mlair/artifacts/models:ro
+      - mlair_dataset_artifacts:/mlair/artifacts/datasets
+    ports:
+      - "${CV_API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 180s
+    depends_on:
+      mlair:
+        condition: service_healthy
+      mlair-artifact-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [mlairnet]
+
+  mlair-cv-train-worker:
+    image: ${CV_WORKER_IMAGE:-cv-lifecycle-workload:latest}
+    container_name: mlair-cv-train-worker
+    command: python scripts/mlair_cv_pipeline_worker.py
+    environment:
+      PYTHONPATH: /app
+      MLAIR_API_BASE_URL: http://mlair:8080
+      MLAIR_WORKER_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
+      ML_AIR_TRACKING_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
+      MLAIR_WORKER_ID: ${MLAIR_CV_TRAIN_WORKER_ID:-cv-lifecycle-worker}
+      MLAIR_LOG_FLUSH_BATCH: ${MLAIR_LOG_FLUSH_BATCH:-5}
+      MLAIR_LOG_FLUSH_INTERVAL_SEC: ${MLAIR_LOG_FLUSH_INTERVAL_SEC:-2}
+      MLAIR_CAPABILITIES: cv_yolo_split,cv_yolo_detect,cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine
+      CV_MLAIR_LIFECYCLE_IMPORT_STAGE: ${CV_MLAIR_LIFECYCLE_IMPORT_STAGE:-staging}
+      CV_MLAIR_LIFECYCLE_AUTO_PROMOTE: ${CV_MLAIR_LIFECYCLE_AUTO_PROMOTE:-1}
+      CV_MLAIR_GATE_MIN_MAP_DELTA: ${CV_MLAIR_GATE_MIN_MAP_DELTA:-0.0}
+      CV_MLAIR_HARD_EXAMPLE_DATASET: ${CV_MLAIR_HARD_EXAMPLE_DATASET:-cv-traffic-hard-examples}
+      CV_MLAIR_HARD_EXAMPLE_MAX_CONF: ${CV_MLAIR_HARD_EXAMPLE_MAX_CONF:-0.35}
+      CV_MLAIR_PERSIST_INGEST_FRAMES: ${CV_MLAIR_PERSIST_INGEST_FRAMES:-0}
+      MLAIR_HEARTBEAT_INTERVAL_SEC: ${MLAIR_HEARTBEAT_INTERVAL_SEC:-1}
+      MLAIR_RESOURCE_MONITOR_ENABLED: ${MLAIR_RESOURCE_MONITOR_ENABLED:-1}
+      MLAIR_RESOURCE_SAMPLE_INTERVAL_SEC: ${MLAIR_RESOURCE_SAMPLE_INTERVAL_SEC:-1}
+      CV_MLAIR_TRAIN_DEVICE: ${CV_MLAIR_TRAIN_DEVICE:-cpu}
+      CV_MLAIR_TRAIN_EPOCHS: ${CV_MLAIR_TRAIN_EPOCHS:-10}
+      CV_MLAIR_TRAIN_MAX_FRAMES: ${CV_MLAIR_TRAIN_MAX_FRAMES:-0}
+      CV_MLAIR_DETECT_MAX_FRAMES: ${CV_MLAIR_DETECT_MAX_FRAMES:-0}
+      # Auto-label teacher: strong COCO detector from ./weights (survives podman reset).
+      CV_MLAIR_DETECT_BASE_MODEL: ${CV_MLAIR_DETECT_BASE_MODEL:-yolov8s/pretrained}
+      CV_MLAIR_TRAIN_BATCH: ${CV_MLAIR_TRAIN_BATCH:-1}
+      CV_MLAIR_TRAIN_IMGSZ: ${CV_MLAIR_TRAIN_IMGSZ:-512}
+      CV_MLAIR_TRAIN_WORKERS: ${CV_MLAIR_TRAIN_WORKERS:-0}
+      PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      CV_ARTIFACT_ROOT: /app/artifacts
+      CV_API_BASE_URL: http://cv-api:8000
+      CV_MLAIR_API_URL: http://mlair:8080
+      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN:-admin-token}
+      CV_MLAIR_TENANT: ${CV_MLAIR_TENANT:-default}
+      CV_MLAIR_PROJECT: ${CV_MLAIR_PROJECT:-default_project}
+      CV_MLAIR_MODEL_ARTIFACT_MOUNT: /mlair/artifacts
+    volumes:
+      - cv_workload_artifacts:/app/artifacts
+      - ./weights:/app/weights
+      - mlair_model_artifacts:/mlair/artifacts/models:ro
+      - mlair_dataset_artifacts:/mlair/artifacts/datasets
+    depends_on:
+      mlair:
+        condition: service_healthy
+      mlair-artifact-init:
+        condition: service_completed_successfully
+      cv-api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [mlairnet]
+
+  cv-ui:
+    image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
+    container_name: cv-lifecycle-ui
+    command: streamlit run frontend/app.py --server.port=8501 --server.address=0.0.0.0 --browser.gatherUsageStats=false
+    environment:
+      PYTHONPATH: /app
+      CV_API_BASE_URL: http://cv-api:8000
+      CV_MLAIR_HUB_URL: http://localhost:${MLAIR_PORT:-8080}
+      CV_CLIENT_SAVE_TO_DATASET: ${CV_CLIENT_SAVE_TO_DATASET:-1}
+    volumes:
+      - ./weights:/app/weights:ro
+    ports:
+      - "${CV_UI_PORT:-8501}:8501"
+    depends_on:
+      cv-api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [mlairnet]
+
+volumes:
+  mlair_pgdata:
+  mlair_dataset_artifacts:
+  mlair_model_artifacts:
+  mlair_minio:
+  cv_workload_artifacts:
+
+networks:
+  mlairnet:

@@ -1,0 +1,17 @@
+# Derived MLAir server image: base ml-air:latest + YOLO's lightweight CV plugin CONTRACTS.
+#
+# MLAir loads plugins only via Python entry points (group "mlair.plugins"), and validates
+# pipelines server-side, so the cv_yolo_* contracts must live inside the API process.
+# `integrations/mlair_cv_plugins` is contract-only (name/version/engine_version/inputs/
+# outputs/lineage/ui_schema + validate) — NO torch/ultralytics; the real training runs in
+# the external CV worker. This only layers YOLO's own package onto the prebuilt image;
+# it never references or rebuilds the ml-air source tree.
+#
+# Build (via compose): docker compose build mlair   ->   image ml-air-cv:latest
+ARG MLAIR_BASE_IMAGE=ml-air:latest
+FROM ${MLAIR_BASE_IMAGE}
+
+USER root
+COPY integrations/mlair_cv_plugins /opt/mlair_cv_plugins
+RUN pip install --no-cache-dir /opt/mlair_cv_plugins
+# Keep the base image's default user/entrypoint (all-in-one supervisord needs root).

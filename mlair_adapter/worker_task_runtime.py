@@ -1,45 +1,57 @@
-"""Shared external-worker lease helpers: heartbeat + resource usage."""
+"""External-worker lease helpers: heartbeat, resource usage (SDK) and cancellation.
+
+For **external execution mode** MLAir cannot measure the worker's CPU/RAM/GPU on its own
+(the worker runs in a separate container/process). The worker task API only *stores* the
+usage the worker posts (`heartbeat.usage`, `complete.usage_samples`/`resource_usage`).
+So sampling runs inside the worker using MLAir's own SDK ``sdk.resource_monitor``.
+
+Cancellation: when a run/task is cancelled (or the lease is lost), MLAir's
+``POST /v1/tasks/{id}/heartbeat`` returns ``{"ok": false}`` (its UPDATE only matches a
+still-``RUNNING`` task leased by this worker). The heartbeat loop watches for that and
+sets a cancel ``Event``; running plugin code (training callback / detect loop) calls
+``raise_if_cancelled()`` to abort promptly instead of running to completion.
+"""
 
 from __future__ import annotations
 
 import contextvars
 import os
 import threading
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
-from mlair_adapter.resource_monitor import ResourceMonitor
-from mlair_adapter.task_resource_monitor import default_sample_interval_seconds
+from sdk.resource_monitor import ResourceMonitor, default_sample_interval_seconds
 
-_active_monitor: contextvars.ContextVar[ResourceMonitor | None] = contextvars.ContextVar(
-    "_active_monitor",
+
+class TaskCancelled(Exception):
+    """Raised inside a plugin handler when its MLAir task was cancelled/lease lost."""
+
+
+_cancel_event: contextvars.ContextVar[threading.Event | None] = contextvars.ContextVar(
+    "_cancel_event",
     default=None,
 )
 
 
-def capture_active_monitor_sample() -> None:
-    """Sample resource usage from the in-flight task monitor (e.g. right after GPU val)."""
-    monitor = _active_monitor.get()
-    if monitor is not None:
-        monitor._inner.sample_once()
+def current_cancel_event() -> threading.Event | None:
+    return _cancel_event.get()
 
 
-def refresh_task_memory_baseline() -> None:
-    """Re-baseline RSS after in-task phase change (GPU train fail → CPU retry)."""
-    monitor = _active_monitor.get()
-    if monitor is not None:
-        monitor.refresh_memory_baseline()
+def is_cancelled() -> bool:
+    ev = _cancel_event.get()
+    return ev is not None and ev.is_set()
+
+
+def raise_if_cancelled() -> None:
+    """Abort the in-flight task if MLAir signalled cancellation. Call in long loops."""
+    if is_cancelled():
+        raise TaskCancelled()
 
 
 def _heartbeat_interval_sec() -> float:
-    raw = (
-        os.getenv("MLAIR_HEARTBEAT_INTERVAL_SEC")
-        or os.getenv("ML_AIR_RESOURCE_FLUSH_INTERVAL")
-        or "3"
-    ).strip()
+    raw = (os.getenv("MLAIR_HEARTBEAT_INTERVAL_SEC") or "3").strip()
     try:
         return max(1.0, float(raw))
     except ValueError:
@@ -73,6 +85,7 @@ def _heartbeat_loop(
     task_id: str,
     stop: threading.Event,
     monitor: ResourceMonitor | None,
+    cancel: threading.Event,
 ) -> None:
     interval = _heartbeat_interval_sec()
     url = task_url(base, task_id, "heartbeat")
@@ -83,7 +96,12 @@ def _heartbeat_loop(
                 usage = monitor.latest_heartbeat_usage()
                 if usage:
                     body["usage"] = usage
-            post_json(url, auth_token, body, timeout=30)
+            resp = post_json(url, auth_token, body, timeout=30)
+            # MLAir returns ok=false once the task is no longer RUNNING+leased by us
+            # (cancelled, or lease lost/taken) → signal the handler to abort.
+            if isinstance(resp, dict) and resp.get("ok") is False and not cancel.is_set():
+                print(f"cancel_detected task_id={task_id} (heartbeat ok=false)", flush=True)
+                cancel.set()
         except Exception as exc:
             print(f"heartbeat_error task_id={task_id} err={exc}", flush=True)
         if stop.wait(interval):
@@ -97,37 +115,37 @@ def run_handler_with_heartbeat(
     task_id: str,
     handler: Callable[[], dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run task handler; return (plugin_result, complete_bundle for complete/fail)."""
+    """Run the task handler under the SDK resource monitor + lease heartbeat.
+
+    Returns ``(plugin_result, complete_bundle)``. Raises :class:`TaskCancelled` if MLAir
+    cancelled the task while it ran (handler code aborts via ``raise_if_cancelled`` /
+    the training callback).
+    """
     stop = threading.Event()
-    sample_iv = default_sample_interval_seconds()
+    cancel = threading.Event()
     monitor = ResourceMonitor(
         task_id=task_id,
+        interval_seconds=default_sample_interval_seconds(),
         flush_interval_seconds=0,
-        interval_seconds=sample_iv,
     )
-    monitor_ctx = _active_monitor.set(monitor)
+    token_ctx = _cancel_event.set(cancel)
     try:
+        # ``with monitor`` starts the sampling thread (see __enter__); __exit__ stops it.
         with monitor:
             hb = threading.Thread(
                 target=_heartbeat_loop,
-                args=(base, token, worker_id, task_id, stop, monitor),
+                args=(base, token, worker_id, task_id, stop, monitor, cancel),
                 name=f"heartbeat-{task_id}",
                 daemon=True,
             )
             hb.start()
-            exc_to_raise: BaseException | None = None
-            result: dict[str, Any] = {}
             try:
                 result = handler()
-            except BaseException as exc:
-                exc_to_raise = exc
             finally:
-                capture_active_monitor_sample()
                 stop.set()
                 hb.join(timeout=max(_heartbeat_interval_sec() + 2.0, 5.0))
-        bundle = monitor.complete_bundle()
-        if exc_to_raise is not None:
-            raise exc_to_raise
-        return result, bundle
+        if cancel.is_set():
+            raise TaskCancelled()
+        return result, monitor.complete_bundle()
     finally:
-        _active_monitor.reset(monitor_ctx)
+        _cancel_event.reset(token_ctx)

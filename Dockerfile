@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt ./
+COPY vendor ./vendor
 COPY ultralytics ./ultralytics
 COPY config.py utils.py app.py ./
 
@@ -28,7 +29,8 @@ RUN pip install --upgrade pip wheel \
        else \
          pip install torch torchvision --index-url https://download.pytorch.org/whl/${PYTORCH_WHEEL}; \
        fi \
-    && pip install -r requirements.txt
+    && pip install -r requirements.txt \
+    && pip install --force-reinstall --no-deps ./vendor/mlair-*.whl
 
 COPY backend ./backend
 COPY frontend ./frontend

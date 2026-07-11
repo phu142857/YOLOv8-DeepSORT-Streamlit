@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
+import threading
+import time
 from typing import TextIO
 
 from mlair_adapter.task_log_client import TaskLogSink
+
+_LOG_FLUSH_INTERVAL_SEC = float(os.getenv("MLAIR_LOG_FLUSH_INTERVAL_SEC", "2"))
 
 # Ultralytics/tqdm write progress + warnings to stderr — not task failures.
 _STDERR_ERROR_HINTS = re.compile(
@@ -61,6 +66,13 @@ class _StreamTee(TextIO):
         if not data:
             return 0
         self._original.write(data)
+        # tqdm progress uses \r without \n — treat as a line boundary for live Hub logs.
+        if "\r" in data and "\n" not in data:
+            parts = data.split("\r")
+            tail = parts[-1]
+            if tail.strip():
+                self._emit(tail)
+            return len(data)
         self._pending += data
         while "\n" in self._pending:
             line, self._pending = self._pending.split("\n", 1)
@@ -96,17 +108,35 @@ class capture_task_logs:
         self._sink = sink
         self._orig_out: TextIO | None = None
         self._orig_err: TextIO | None = None
+        self._tee_out: _StreamTee | None = None
+        self._tee_err: _StreamTee | None = None
         self._handler: _LoggingHandler | None = None
+        self._flush_stop = threading.Event()
+        self._flush_thread: threading.Thread | None = None
+
+    def _periodic_flush(self) -> None:
+        while not self._flush_stop.wait(_LOG_FLUSH_INTERVAL_SEC):
+            if self._tee_err is not None:
+                self._tee_err.flush()
+            if self._tee_out is not None:
+                self._tee_out.flush()
+            self._sink.flush()
 
     def __enter__(self) -> TaskLogSink:
         self._sink.line("task execution started", level="INFO")
         self._orig_out = sys.stdout
         self._orig_err = sys.stderr
-        sys.stdout = _StreamTee(self._orig_out, self._sink, level="INFO")  # type: ignore[assignment]
-        # stderr: Ultralytics progress bars + warnings — classify; only real failures → ERROR
-        sys.stderr = _StreamTee(  # type: ignore[assignment]
-            self._orig_err, self._sink, level="INFO", classify_stderr=True
+        self._tee_out = _StreamTee(self._orig_out, self._sink, level="INFO")
+        self._tee_err = _StreamTee(self._orig_err, self._sink, level="INFO", classify_stderr=True)
+        sys.stdout = self._tee_out  # type: ignore[assignment]
+        sys.stderr = self._tee_err  # type: ignore[assignment]
+        self._flush_stop.clear()
+        self._flush_thread = threading.Thread(
+            target=self._periodic_flush,
+            name=f"task-log-flush-{self._sink._task_id}",
+            daemon=True,
         )
+        self._flush_thread.start()
         self._handler = _LoggingHandler(self._sink)
         self._handler.setFormatter(logging.Formatter("%(message)s"))
         logging.getLogger().addHandler(self._handler)
@@ -115,11 +145,16 @@ class capture_task_logs:
         return self._sink
 
     def __exit__(self, *exc: object) -> None:
+        self._flush_stop.set()
+        if self._flush_thread is not None:
+            self._flush_thread.join(timeout=_LOG_FLUSH_INTERVAL_SEC + 1.0)
+        if self._tee_out is not None:
+            self._tee_out.flush()
+        if self._tee_err is not None:
+            self._tee_err.flush()
         if self._orig_out is not None:
-            sys.stdout.flush()
             sys.stdout = self._orig_out
         if self._orig_err is not None:
-            sys.stderr.flush()
             sys.stderr = self._orig_err
         if self._handler is not None:
             logging.getLogger().removeHandler(self._handler)

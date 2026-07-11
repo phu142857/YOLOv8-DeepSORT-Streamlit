@@ -7,7 +7,25 @@ import os
 import threading
 from typing import Any
 
+from mlair_adapter.worker_task_runtime import TaskCancelled, raise_if_cancelled
+
 logger = logging.getLogger(__name__)
+
+
+def _attach_cancel_callbacks(model: Any) -> None:
+    """Register Ultralytics callbacks that abort training when the task is cancelled.
+
+    Checked at batch/epoch boundaries so a cancelled run stops within a few steps
+    instead of running to completion.
+    """
+    def _cb(_trainer: Any) -> None:
+        raise_if_cancelled()
+
+    for event in ("on_train_batch_end", "on_train_epoch_end", "on_fit_epoch_end"):
+        try:
+            model.add_callback(event, _cb)
+        except Exception:
+            pass
 
 _streak_lock = threading.Lock()
 _consecutive_gpu_train_failures = 0
@@ -151,8 +169,14 @@ def run_ultralytics_train_with_device_policy(
     device = pick_lifecycle_train_device(batch=batch)
     threshold = gpu_fail_streak_threshold()
 
+    _attach_cancel_callbacks(model)
+
     try:
         results = model.train(device=device, **train_kwargs)
+    except TaskCancelled:
+        # User cancelled the run — NOT a GPU failure; don't count the streak or CPU-retry.
+        logger.warning("train aborted: task cancelled")
+        raise
     except Exception as exc:
         if not is_gpu_device(device):
             raise
@@ -164,9 +188,6 @@ def run_ultralytics_train_with_device_policy(
             failures,
         )
         try:
-            from mlair_adapter.worker_task_runtime import refresh_task_memory_baseline
-
-            refresh_task_memory_baseline()
             results = model.train(device="cpu", **train_kwargs)
             logger.info("train succeeded on CPU after GPU failure streak")
             return results, "cpu"

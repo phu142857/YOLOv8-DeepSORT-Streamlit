@@ -52,7 +52,8 @@ def execute_training(
     Invoked by ml-air **executor** HTTP task (`cv-yolo-vehicle-train` pipeline).
 
     Downloads the pinned dataset version, builds YOLO labels from CV job detections,
-    fine-tunes from registry base weights, imports checkpoint back to MLAir model registry.
+    fine-tunes from registry base weights, and returns the checkpoint for MLAir Hub
+    to register as a model version (linked to run_id on task complete).
     """
     _check_callback_token(authorization)
 
@@ -103,7 +104,7 @@ def execute_training(
                 "outputs": [
                     {
                         "name": "model_checkpoint",
-                        "version": str((result.get("imported_version") or {}).get("version", "")),
+                        "version": str(result.get("checkpoint") or ""),
                     }
                 ],
             },

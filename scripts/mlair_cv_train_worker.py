@@ -92,16 +92,19 @@ def main() -> None:
                 result = run_yolo_training(ctx)
                 checkpoint = str(result.get("checkpoint") or "")
                 metrics = result.get("metrics") or {}
+                complete_body: dict[str, Any] = {
+                    "worker_id": worker_id,
+                    "metrics": metrics,
+                }
+                if checkpoint:
+                    uri = f"file://{checkpoint}" if checkpoint.startswith("/") else checkpoint
+                    complete_body["artifacts"] = [{"path": "train/checkpoint", "uri": uri}]
                 _post_json(
                     f"{base}/v1/tasks/{urllib.parse.quote(tid, safe='')}/complete",
                     token,
-                    {
-                        "worker_id": worker_id,
-                        "metrics": metrics,
-                        "artifact_uri": f"file://{checkpoint}" if checkpoint.startswith("/") else checkpoint,
-                    },
+                    complete_body,
                 )
-                print(f"complete task_id={tid} version={result.get('imported_version')}", flush=True)
+                print(f"complete task_id={tid} checkpoint={checkpoint or 'none'}", flush=True)
             except Exception as exc:
                 print(f"fail task_id={tid} err={exc}", flush=True)
                 try:

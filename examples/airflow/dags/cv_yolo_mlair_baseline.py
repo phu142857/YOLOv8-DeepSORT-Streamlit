@@ -25,7 +25,11 @@ MLFLOW_EXP = os.environ.get("MLFLOW_EXPERIMENT_NAME", "cv-yolo-lifecycle-baselin
 BASELINE_RUNNER_URL = os.environ.get(
     "BASELINE_RUNNER_URL", "http://baseline-cv-runner:9191"
 )
-E2_STOP_AFTER = os.environ.get("E2_STOP_AFTER", "prepare")
+E2_STOP_AFTER = os.environ.get("E2_STOP_AFTER", "")
+CV_TRAIN_BATCH = os.environ.get("CV_MLAIR_TRAIN_BATCH", "2")
+CV_TRAIN_IMGSZ = os.environ.get("CV_MLAIR_TRAIN_IMGSZ", "512")
+CV_TRAIN_EPOCHS = os.environ.get("CV_MLAIR_TRAIN_EPOCHS", "10")
+CV_GATE_MIN_DELTA = os.environ.get("CV_MLAIR_GATE_MIN_MAP_DELTA", "-0.17")
 
 
 def _http_step(step: str) -> str:
@@ -45,16 +49,21 @@ BODY=$(python3 -c "import json; print(json.dumps({{
     'CV_API_BASE_URL': '{CV_API}',
     'CV_ARTIFACT_ROOT': '/app/artifacts',
     'BASELINE_RUN_ID': 'af-{{{{ dag_run.run_id }}}}',
+    'AIRFLOW_DAG_RUN_ID': '{{{{ dag_run.run_id }}}}',
     'BASELINE_MODE': '{{{{ dag_run.conf.get('mode', params.mode) }}}}',
     'MLFLOW_TRACKING_URI': '{MLFLOW_URI}',
     'MLFLOW_EXPERIMENT_NAME': '{MLFLOW_EXP}',
+    'CV_MLAIR_TRAIN_BATCH': '{CV_TRAIN_BATCH}',
+    'CV_MLAIR_TRAIN_IMGSZ': '{CV_TRAIN_IMGSZ}',
+    'CV_MLAIR_TRAIN_EPOCHS': '{CV_TRAIN_EPOCHS}',
+    'CV_MLAIR_GATE_MIN_MAP_DELTA': '{CV_GATE_MIN_DELTA}',
   }},
 }}))")
-CODE=$(curl -sf -o /tmp/step_out.json -w "%{{http_code}}" -X POST "{BASELINE_RUNNER_URL}/step" \\
+CODE=$(curl -s -o /tmp/step_out_{step}.json -w "%{{http_code}}" -X POST "{BASELINE_RUNNER_URL}/step" \\
   -H "Content-Type: application/json" -d "$BODY" || echo "000")
-cat /tmp/step_out.json
+cat /tmp/step_out_{step}.json
 if [[ "$CODE" != "200" ]]; then exit 1; fi
-python3 -c "import json,sys; r=json.load(open('/tmp/step_out.json')); sys.exit(0 if r.get('ok') else 1)"
+python3 -c "import json,sys; r=json.load(open('/tmp/step_out_{step}.json')); sys.exit(0 if r.get('ok') else 1)"
 """
 
 
@@ -67,7 +76,8 @@ def _choose_mode_branch(**context) -> str:
 
 
 def _after_prepare_branch(**context) -> str:
-    if str(os.environ.get("E2_STOP_AFTER", "prepare")).strip().lower() == "prepare":
+    stop = str(os.environ.get("E2_STOP_AFTER", "")).strip().lower()
+    if stop == "prepare":
         return "e2_done"
     return "cv_train"
 
@@ -101,7 +111,11 @@ with DAG(
     )
     cv_split = BashOperator(task_id="cv_split", bash_command=_http_step("split"))
     cv_detect = BashOperator(task_id="cv_detect", bash_command=_http_step("detect"))
-    cv_prepare = BashOperator(task_id="cv_prepare", bash_command=_http_step("prepare"))
+    cv_prepare = BashOperator(
+        task_id="cv_prepare",
+        bash_command=_http_step("prepare"),
+        trigger_rule=TriggerRule.NONE_FAILED_MIN_ONE_SUCCESS,
+    )
     after_prepare = BranchPythonOperator(
         task_id="after_prepare",
         python_callable=_after_prepare_branch,

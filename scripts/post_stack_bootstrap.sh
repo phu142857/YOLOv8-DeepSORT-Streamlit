@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 CV_API_PORT="${CV_API_PORT:-8000}"
 ML_AIR_API_PORT="${ML_AIR_API_PORT:-8080}"
 CV_API_URL="${CV_API_URL:-http://127.0.0.1:${CV_API_PORT}}"
-MLAIR_API_CONTAINER="${MLAIR_API_CONTAINER:-ml-air-api}"
+MLAIR_API_CONTAINER="${MLAIR_API_CONTAINER:-mlair}"
 MAX_WAIT="${BOOTSTRAP_MAX_WAIT_SEC:-180}"
 
 wait_http() {
@@ -34,8 +34,8 @@ wait_http "http://127.0.0.1:${ML_AIR_API_PORT}/health" "ml-air-api"
 if ! docker exec "$MLAIR_API_CONTAINER" python -c \
   "from app.domains.orchestration import worker_task_service as w; assert hasattr(w,'_persist_run_plugin_tracking')" \
   2>/dev/null; then
-  echo "WARN: ml-air-api image lacks tracking persist (Hub Metrics/Artifacts will be empty)." >&2
-  echo "  Run: ./scripts/build_mlair_local_images.sh && docker compose up -d --force-recreate api frontend" >&2
+  echo "WARN: ml-air:latest image lacks tracking persist (Hub Metrics/Artifacts will be empty)." >&2
+  echo "  Rebuild/replace the ml-air:latest image (owned by the ml-air project), then: docker compose up -d --force-recreate mlair" >&2
 fi
 
 echo "==> Fixing artifact volume permissions (model versions / .pt import)..."
@@ -77,4 +77,4 @@ print('  pipeline:', d.get('pipeline_id'), 'mode:', d.get('mode'), 'skipped:', d
     && echo "  plugins: reload ok" || echo "  plugins: reload skipped (build api with cv plugins)"
 fi
 
-echo "==> Done. Hub: http://localhost:${ML_AIR_FRONTEND_PORT:-38080}"
+echo "==> Done. Hub: http://localhost:${MLAIR_PORT:-8080}"

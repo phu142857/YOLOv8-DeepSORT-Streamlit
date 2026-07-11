@@ -114,9 +114,8 @@ def reload_cv_plugins(client: MLAirClient | None = None) -> dict:
     client = client or MLAirClient()
     if not client.enabled:
         return {"ok": False, "reason": "mlair_not_configured"}
-    pfx = client._prefix()
     try:
-        return client.post(f"{pfx}/plugins/reload", json={})
+        return client.post("/v1/plugins/reload", json={})
     except Exception as exc:
         logger.warning("plugin reload failed: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -143,7 +142,7 @@ def _publish_pipeline_version(
     republished = False
     if needs_publish:
         config = load_pipeline_config(pipeline_id, mode=mode, cv_train_url=train_url)
-        client.post("/v1/pipelines/validate", json={"config": config})
+        client.post("/v1/pipelines/validate", json=config)
         ver = client.post(f"{pfx}/pipelines/{pipeline_id}/versions", json={"config": config})
         version_id = ver.get("version_id") if isinstance(ver, dict) else None
         republished = latest_cfg is not None
