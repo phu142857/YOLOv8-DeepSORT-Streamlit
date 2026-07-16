@@ -5,10 +5,12 @@
 
 services:
   mlair-cv-train-worker:
+    entrypoint: ["/app/scripts/docker-entrypoint-cv.sh"]
     build:
       context: .
       dockerfile: Dockerfile
       args:
+        MLAIR_BASE_IMAGE: ${MLAIR_BASE_IMAGE:-ml-air:latest}
         PYTORCH_WHEEL: ${CV_WORKER_PYTORCH_WHEEL:-cu124}
     image: ${CV_WORKER_IMAGE:-cv-lifecycle-workload:gpu}
     pull_policy: never

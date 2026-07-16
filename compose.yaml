@@ -1,20 +1,29 @@
-# MLAir-as-a-service (like an external MLflow server) + YOLO CV workload.
+# Full YOLO + MLAir stack — one command:
 #
+#   cp .env.docker.example .env   # first time only
+#   docker compose build
 #   docker compose up -d
 #
-# MLAir runs from `ml-air-cv:latest` — a thin image derived FROM the prebuilt
-# `ml-air:latest` (all-in-one: API + Hub + realtime + Postgres + Redis) that adds ONLY
-# YOLO's lightweight cv_yolo_* plugin CONTRACTS so server-side pipeline validation passes
-# (see Dockerfile.mlair-cv). ml-air:latest stays pure; we never touch the ml-air source.
-# YOLO services are pure clients that talk to MLAir over the network (http://mlair:8080).
-# The MLAir SDK is installed into the CV image via the vendored wheel (vendor/mlair-*.whl,
-# exported by ml-air packaging) — see Dockerfile.
-#
-# GPU training: ./scripts/compose up -d --build   (adds docker-compose.gpu.yml overlay)
+# Builds ml-air:latest from ../ml-air, layers cv_yolo_* plugins (ml-air-cv:latest),
+# provisions a Hub PAT for cv-api/worker, and bootstraps registry + pipeline on startup.
+# GPU train worker: .env sets COMPOSE_FILE=compose.yaml:docker-compose.gpu.yml (default).
 
 name: mlair-cv
 
 services:
+  # Build ml-air:latest from the ml-air sibling repo (no manual mlair rebuild).
+  mlair-base:
+    image: ml-air:latest
+    build:
+      context: ${MLAIR_REPO:-../ml-air}
+      dockerfile: deploy/Dockerfile.allinone
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+        NEXT_PUBLIC_MLAIR_REALTIME_WS: ws://localhost:8080/ws
+    entrypoint: ["/bin/true"]
+    restart: "no"
+    networks: [mlairnet]
+
   mlair:
     # Derived image = ml-air:latest + YOLO's lightweight cv_yolo_* plugin CONTRACTS
     # (server-side pipeline validation needs the entry points). See Dockerfile.mlair-cv.
@@ -29,6 +38,8 @@ services:
     container_name: mlair
     ports:
       - "${MLAIR_PORT:-8080}:8080"
+    env_file:
+      - ./deploy/yolo-mlair.env
     environment:
       ML_AIR_TRACKING_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
       ML_AIR_JWT_HS256_SECRET: ${ML_AIR_JWT_HS256_SECRET:-mlair-dev-jwt-secret-32bytes-minimum-key}
@@ -69,9 +80,28 @@ services:
       retries: 12
       start_period: 120s
     depends_on:
+      mlair-base:
+        condition: service_completed_successfully
       minio:
         condition: service_started
     restart: unless-stopped
+    networks: [mlairnet]
+
+  # Issue a long-lived PAT for cv-api + external worker (persisted in stack_auth volume).
+  stack-auth-init:
+    image: docker.io/library/alpine:3.20
+    volumes:
+      - stack_auth:/run/stack-auth
+      - ./scripts/stack-auth-init.sh:/init.sh:ro
+    environment:
+      MLAIR_URL: http://mlair:8080
+      MLAIR_ADMIN_USER: ${ML_AIR_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      MLAIR_ADMIN_PASSWORD: ${ML_AIR_BOOTSTRAP_ADMIN_PASSWORD:-admin-change-me}
+    entrypoint: ["/bin/sh", "/init.sh"]
+    depends_on:
+      mlair:
+        condition: service_healthy
+    restart: "no"
     networks: [mlairnet]
 
   minio:
@@ -145,10 +175,12 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
+        MLAIR_BASE_IMAGE: ${MLAIR_BASE_IMAGE:-ml-air:latest}
         PYTORCH_WHEEL: ${PYTORCH_WHEEL:-cpu}
     image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
     container_name: cv-lifecycle-api
-    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    entrypoint: ["/app/scripts/docker-entrypoint-cv.sh"]
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       PYTHONPATH: /app
       CV_ARTIFACT_ROOT: /app/artifacts
@@ -156,8 +188,7 @@ services:
       MLAIR_API_BASE_URL: http://mlair:8080
       CV_MLAIR_API_URL: http://mlair:8080
       CV_MLAIR_HUB_URL: http://localhost:${MLAIR_PORT:-8080}
-      ML_AIR_TRACKING_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
-      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN:-admin-token}
+      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN:-}
       CV_MLAIR_TENANT: ${CV_MLAIR_TENANT:-default}
       CV_MLAIR_PROJECT: ${CV_MLAIR_PROJECT:-default_project}
       CV_MLAIR_DATASET_NAME: ${CV_MLAIR_DATASET_NAME:-cv-traffic-frames}
@@ -194,6 +225,8 @@ services:
       - ./weights:/app/weights
       - mlair_model_artifacts:/mlair/artifacts/models:ro
       - mlair_dataset_artifacts:/mlair/artifacts/datasets
+      - stack_auth:/run/stack-auth:ro
+      - ./scripts/docker-entrypoint-cv.sh:/app/scripts/docker-entrypoint-cv.sh:ro
     ports:
       - "${CV_API_PORT:-8000}:8000"
     healthcheck:
@@ -203,6 +236,10 @@ services:
       retries: 12
       start_period: 180s
     depends_on:
+      mlair-base:
+        condition: service_completed_successfully
+      stack-auth-init:
+        condition: service_completed_successfully
       mlair:
         condition: service_healthy
       mlair-artifact-init:
@@ -213,12 +250,12 @@ services:
   mlair-cv-train-worker:
     image: ${CV_WORKER_IMAGE:-cv-lifecycle-workload:latest}
     container_name: mlair-cv-train-worker
-    command: python scripts/mlair_cv_pipeline_worker.py
+    entrypoint: ["/app/scripts/docker-entrypoint-cv.sh"]
+    command: ["python", "scripts/mlair_cv_pipeline_worker.py"]
     environment:
       PYTHONPATH: /app
       MLAIR_API_BASE_URL: http://mlair:8080
-      MLAIR_WORKER_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
-      ML_AIR_TRACKING_TOKEN: ${ML_AIR_TRACKING_TOKEN:-admin-token}
+      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN:-}
       MLAIR_WORKER_ID: ${MLAIR_CV_TRAIN_WORKER_ID:-cv-lifecycle-worker}
       MLAIR_LOG_FLUSH_BATCH: ${MLAIR_LOG_FLUSH_BATCH:-5}
       MLAIR_LOG_FLUSH_INTERVAL_SEC: ${MLAIR_LOG_FLUSH_INTERVAL_SEC:-2}
@@ -245,7 +282,6 @@ services:
       CV_ARTIFACT_ROOT: /app/artifacts
       CV_API_BASE_URL: http://cv-api:8000
       CV_MLAIR_API_URL: http://mlair:8080
-      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN:-admin-token}
       CV_MLAIR_TENANT: ${CV_MLAIR_TENANT:-default}
       CV_MLAIR_PROJECT: ${CV_MLAIR_PROJECT:-default_project}
       CV_MLAIR_MODEL_ARTIFACT_MOUNT: /mlair/artifacts
@@ -254,7 +290,11 @@ services:
       - ./weights:/app/weights
       - mlair_model_artifacts:/mlair/artifacts/models:ro
       - mlair_dataset_artifacts:/mlair/artifacts/datasets
+      - stack_auth:/run/stack-auth:ro
+      - ./scripts/docker-entrypoint-cv.sh:/app/scripts/docker-entrypoint-cv.sh:ro
     depends_on:
+      stack-auth-init:
+        condition: service_completed_successfully
       mlair:
         condition: service_healthy
       mlair-artifact-init:
@@ -289,6 +329,7 @@ volumes:
   mlair_model_artifacts:
   mlair_minio:
   cv_workload_artifacts:
+  stack_auth:
 
 networks:
   mlairnet:
