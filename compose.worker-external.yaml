@@ -1,0 +1,151 @@
+# YOLO CV worker + cv-api against an EXTERNAL MLAir controller (no embedded mlair service).
+#
+#   cp .env.worker-external.example .env
+#   # edit MLAIR_CONTROLLER_URL, CV_MLAIR_TOKEN, CV_MLAIR_TENANT, CV_MLAIR_PROJECT
+#   docker compose -f compose.worker-external.yaml build
+#   docker compose -f compose.worker-external.yaml up -d
+#
+# GPU overlay (optional): COMPOSE_FILE=compose.worker-external.yaml:docker-compose.gpu.yml
+
+name: mlair-cv-worker
+
+services:
+  mlair-artifact-init:
+    image: docker.io/library/alpine:3.20
+    user: "0:0"
+    volumes:
+      - cv_workload_artifacts:/app/artifacts
+      - mlair_dataset_artifacts:/mlair/datasets
+      - mlair_model_artifacts:/mlair/models
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /app/artifacts/jobs /app/artifacts/uploads /app/artifacts/mlair_pipeline_runs
+        mkdir -p /mlair/datasets /mlair/models
+        mkdir -p /mlair/datasets/cv-runtime-frames
+        chown -R 1000:1000 /app/artifacts /mlair/datasets /mlair/models
+    restart: "no"
+    networks: [cvnet]
+
+  cv-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MLAIR_BASE_IMAGE: ${MLAIR_BASE_IMAGE:-ml-air:latest}
+        PYTORCH_WHEEL: ${PYTORCH_WHEEL:-cpu}
+    image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
+    container_name: cv-lifecycle-api
+    entrypoint: ["/app/scripts/docker-entrypoint-cv.sh"]
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      PYTHONPATH: /app
+      CV_ARTIFACT_ROOT: /app/artifacts
+      CV_API_BASE_URL: http://cv-api:8000
+      MLAIR_API_BASE_URL: ${MLAIR_CONTROLLER_URL}
+      CV_MLAIR_API_URL: ${MLAIR_CONTROLLER_URL}
+      CV_MLAIR_HUB_URL: ${CV_MLAIR_HUB_URL}
+      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN}
+      CV_MLAIR_TENANT: ${CV_MLAIR_TENANT:-yolo}
+      CV_MLAIR_PROJECT: ${CV_MLAIR_PROJECT:-yoloVN}
+      CV_MLAIR_DATASET_NAME: ${CV_MLAIR_DATASET_NAME:-cv-traffic-frames}
+      CV_MLAIR_PIPELINE_REQUIRED_SIZE: ${CV_MLAIR_PIPELINE_REQUIRED_SIZE:-50}
+      CV_MLAIR_AUTO_INGEST: ${CV_MLAIR_AUTO_INGEST:-1}
+      CV_MLAIR_AUTO_MATERIALIZE: ${CV_MLAIR_AUTO_MATERIALIZE:-0}
+      CV_MLAIR_BOOTSTRAP_PIPELINE: ${CV_MLAIR_BOOTSTRAP_PIPELINE:-1}
+      CV_MLAIR_TRAIN_PIPELINE_ID: ${CV_MLAIR_TRAIN_PIPELINE_ID:-cv-yolo-lifecycle-train}
+      CV_MLAIR_PIPELINE_MODE: ${CV_MLAIR_PIPELINE_MODE:-plugin}
+      CV_MLAIR_LIFECYCLE_IMPORT_STAGE: ${CV_MLAIR_LIFECYCLE_IMPORT_STAGE:-staging}
+      CV_MLAIR_LIFECYCLE_AUTO_PROMOTE: ${CV_MLAIR_LIFECYCLE_AUTO_PROMOTE:-1}
+      CV_MLAIR_AUTO_SYNC_MODELS: ${CV_MLAIR_AUTO_SYNC_MODELS:-1}
+      CV_MLAIR_SYNC_ON_STARTUP: ${CV_MLAIR_SYNC_ON_STARTUP:-1}
+      CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL: ${CV_MLAIR_MIRROR_REGISTRY_TO_LOCAL:-1}
+      CV_MLAIR_MODEL_ARTIFACT_MOUNT: /mlair/artifacts
+      CV_MLAIR_PERSIST_INGEST_FRAMES: ${CV_MLAIR_PERSIST_INGEST_FRAMES:-0}
+      CV_PERSIST_JOBS: ${CV_PERSIST_JOBS:-1}
+    volumes:
+      - cv_workload_artifacts:/app/artifacts
+      - ./weights:/app/weights
+      - mlair_model_artifacts:/mlair/artifacts/models
+      - mlair_dataset_artifacts:/mlair/artifacts/datasets
+      - ./scripts/docker-entrypoint-cv.sh:/app/scripts/docker-entrypoint-cv.sh:ro
+    ports:
+      - "${CV_API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 180s
+    depends_on:
+      mlair-artifact-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [cvnet]
+
+  mlair-cv-train-worker:
+    image: ${CV_WORKER_IMAGE:-cv-lifecycle-workload:latest}
+    container_name: mlair-cv-train-worker
+    entrypoint: ["/app/scripts/docker-entrypoint-cv.sh"]
+    command: ["python", "scripts/mlair_cv_pipeline_worker.py"]
+    environment:
+      PYTHONPATH: /app
+      MLAIR_API_BASE_URL: ${MLAIR_CONTROLLER_URL}
+      CV_MLAIR_API_URL: ${MLAIR_CONTROLLER_URL}
+      CV_MLAIR_TOKEN: ${CV_MLAIR_TOKEN}
+      MLAIR_WORKER_TOKEN: ${CV_MLAIR_TOKEN}
+      MLAIR_WORKER_ID: ${MLAIR_CV_TRAIN_WORKER_ID:-cv-yolo-worker}
+      MLAIR_CAPABILITIES: cv_yolo_split,cv_yolo_detect,cv_yolo_prepare,cv_yolo_train,cv_yolo_eval,cv_yolo_gate,cv_hard_example_mine
+      CV_MLAIR_TENANT: ${CV_MLAIR_TENANT:-yolo}
+      CV_MLAIR_PROJECT: ${CV_MLAIR_PROJECT:-yoloVN}
+      CV_MLAIR_TRAIN_DEVICE: ${CV_MLAIR_TRAIN_DEVICE:-cpu}
+      CV_MLAIR_TRAIN_EPOCHS: ${CV_MLAIR_TRAIN_EPOCHS:-10}
+      CV_MLAIR_TRAIN_BATCH: ${CV_MLAIR_TRAIN_BATCH:-1}
+      CV_MLAIR_TRAIN_IMGSZ: ${CV_MLAIR_TRAIN_IMGSZ:-512}
+      CV_MLAIR_DETECT_BASE_MODEL: ${CV_MLAIR_DETECT_BASE_MODEL:-yolov8s/pretrained}
+      CV_ARTIFACT_ROOT: /app/artifacts
+      CV_API_BASE_URL: http://cv-api:8000
+      CV_MLAIR_MODEL_ARTIFACT_MOUNT: /mlair/artifacts
+      MLAIR_HEARTBEAT_INTERVAL_SEC: ${MLAIR_HEARTBEAT_INTERVAL_SEC:-1}
+      MLAIR_RESOURCE_MONITOR_ENABLED: ${MLAIR_RESOURCE_MONITOR_ENABLED:-1}
+    volumes:
+      - cv_workload_artifacts:/app/artifacts
+      - ./weights:/app/weights
+      - mlair_model_artifacts:/mlair/artifacts/models:ro
+      - mlair_dataset_artifacts:/mlair/artifacts/datasets
+      - ./scripts/docker-entrypoint-cv.sh:/app/scripts/docker-entrypoint-cv.sh:ro
+    depends_on:
+      mlair-artifact-init:
+        condition: service_completed_successfully
+      cv-api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [cvnet]
+
+  cv-ui:
+    image: ${CV_IMAGE:-cv-lifecycle-workload:latest}
+    container_name: cv-lifecycle-ui
+    command: streamlit run frontend/app.py --server.port=8501 --server.address=0.0.0.0 --browser.gatherUsageStats=false
+    environment:
+      PYTHONPATH: /app
+      CV_API_BASE_URL: http://cv-api:8000
+      CV_MLAIR_HUB_URL: ${CV_MLAIR_HUB_URL}
+      CV_CLIENT_SAVE_TO_DATASET: ${CV_CLIENT_SAVE_TO_DATASET:-1}
+    volumes:
+      - ./weights:/app/weights:ro
+    ports:
+      - "${CV_UI_PORT:-8501}:8501"
+    depends_on:
+      cv-api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [cvnet]
+
+volumes:
+  cv_workload_artifacts:
+  mlair_dataset_artifacts:
+  mlair_model_artifacts:
+
+networks:
+  cvnet:
