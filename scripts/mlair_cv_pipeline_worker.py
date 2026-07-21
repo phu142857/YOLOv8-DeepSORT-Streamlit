@@ -119,7 +119,7 @@ def main() -> None:
                 token,
                 {"worker_id": worker_id, "capabilities": capabilities, "max_tasks": 1},
             )
-        except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        except Exception as exc:  # noqa: BLE001 — keep polling through 502/refused/reset on controller
             print(f"lease_error {exc}", flush=True)
             time.sleep(5)
             continue

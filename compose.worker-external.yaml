@@ -115,6 +115,7 @@ services:
       - mlair_model_artifacts:/mlair/artifacts/models:ro
       - mlair_dataset_artifacts:/mlair/artifacts/datasets
       - ./scripts/docker-entrypoint-cv.sh:/app/scripts/docker-entrypoint-cv.sh:ro
+      - ./scripts/mlair_cv_pipeline_worker.py:/app/scripts/mlair_cv_pipeline_worker.py:ro
     depends_on:
       mlair-artifact-init:
         condition: service_completed_successfully
