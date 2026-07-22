@@ -65,6 +65,8 @@ services:
       CV_DETECTION_MODEL_DIR: ${CV_DETECTION_MODEL_DIR:-weights/detection}
       CV_MLAIR_PERSIST_INGEST_FRAMES: ${CV_MLAIR_PERSIST_INGEST_FRAMES:-0}
       CV_PERSIST_JOBS: ${CV_PERSIST_JOBS:-1}
+      CV_DATASET_ZIP_MAX_MB: ${CV_DATASET_ZIP_MAX_MB:-10240}
+      CV_DATASET_ZIP_MAX_UNZIPPED_MB: ${CV_DATASET_ZIP_MAX_UNZIPPED_MB:-51200}
     volumes:
       - cv_workload_artifacts:/app/artifacts
       - ./weights:/app/weights

@@ -41,7 +41,7 @@ class Settings:
     s3_models_upload_on_promote: bool = _env_bool("CV_MODELS_S3_UPLOAD_ON_PROMOTE", True)
     frame_extract_interval: int = int(_env("CV_FRAME_EXTRACT_INTERVAL", "30"))
     max_upload_mb: int = int(_env("CV_MAX_UPLOAD_MB", "500"))
-    dataset_zip_max_mb: int = int(_env("CV_DATASET_ZIP_MAX_MB", "2048"))
+    dataset_zip_max_mb: int = int(_env("CV_DATASET_ZIP_MAX_MB", "10240"))
     # Safety rails for ZIP dataset import (avoid zip-bombs / EFS overload).
     dataset_zip_max_images: int = int(_env("CV_DATASET_ZIP_MAX_IMAGES", "100000"))
     dataset_zip_max_unzipped_mb: int = int(_env("CV_DATASET_ZIP_MAX_UNZIPPED_MB", "20480"))
