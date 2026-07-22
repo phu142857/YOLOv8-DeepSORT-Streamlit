@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 import config
+from mlair_adapter.artifact_resolve import resolve_local_weights_for_hub_model
 from mlair_adapter.model_client import ModelClient
 from shared.detection_weights_bootstrap import ensure_weights_for_spec
 from shared.settings import settings
@@ -38,6 +39,33 @@ def cache_path_for_model(model_id: str, version: int | None = None) -> Path:
     return cache_root / model_id / "production.pt"
 
 
+def resolve_train_weights_for_hub_model(
+    model_id: str,
+    *,
+    artifact_uri: str | None = None,
+    stage: str = "production",
+) -> Path:
+    """
+    External-worker train base weights: shared MLAir volume when present, else
+    ``weights/detection/{hub_model_name}/`` on the worker (split deploy).
+    """
+    client = ModelClient()
+    if not client.enabled:
+        raise RuntimeError("MLAir not configured for registry models")
+
+    local = resolve_local_weights_for_hub_model(model_id, client=client)
+    if local is not None:
+        logger.info("train weights: hub model_id=%s -> local %s", model_id, local)
+        return local
+
+    uri = str(artifact_uri or "").strip()
+    if uri:
+        dest = settings.mlair_weights_cache_dir / "train-base" / f"{model_id}.pt"
+        return client.download_artifact(uri, dest)
+
+    return ensure_registry_weights(model_id, stage=stage)
+
+
 def ensure_registry_weights(
     model_id: str,
     *,
@@ -56,6 +84,9 @@ def ensure_registry_weights(
         row = client.get_version(model_id, version)
         artifact_uri = str(row.get("artifact_uri") or "")
         if not artifact_uri:
+            local = resolve_local_weights_for_hub_model(model_id, client=client)
+            if local is not None:
+                return local
             raise FileNotFoundError(f"no artifact for model {model_id} version {version}")
         client.download_artifact(artifact_uri, dest)
         logger.info("Cached registry weights model=%s v%s -> %s", model_id, version, dest)
@@ -63,6 +94,9 @@ def ensure_registry_weights(
 
     row = client.resolve_version_row(model_id, stage=stage)
     if row is None or not row.get("artifact_uri"):
+        local = resolve_local_weights_for_hub_model(model_id, client=client)
+        if local is not None:
+            return local
         raise FileNotFoundError(f"no {stage} artifact for model {model_id}")
 
     version = int(row.get("version") or 0)

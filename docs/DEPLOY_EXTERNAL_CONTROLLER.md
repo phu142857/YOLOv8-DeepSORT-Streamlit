@@ -3,147 +3,153 @@
 Kiến trúc:
 
 ```text
-VM controller (p2-node-1)          VM worker (GPU/CPU)
+VM controller (182)                 VM worker (184)
 ┌─────────────────────────┐        ┌──────────────────────────┐
-│ mlair :8080 (all-in-one)│◄─HTTP──│ cv-api :8000             │
+│ mlair :8080             │◄─HTTP──│ cv-api :8000             │
 │ tenant yolo / yoloVN    │        │ mlair-cv-train-worker    │
-│ ML_AIR_TASK_EXECUTION_  │        │ cv-ui :8501 (optional)   │
-│   MODE=external         │        └──────────────────────────┘
-└─────────────────────────┘
+│ ML_AIR_TASK_EXECUTION_  │        │ weights/detection/…      │
+│   MODE=external         │        │ (train weights local)    │
+└─────────────────────────┘        └──────────────────────────┘
 ```
 
-## Bước 1 — Chuẩn bị controller (`~/ml-air`)
+**Nguyên tắc:** MLAir (182) = control plane (run, registry, lease API). Worker (184) = thực thi train; **weights đọc từ `weights/detection/{tên_model_hub}/`** khi không mount volume controller.
 
-### 1.1 Bật external execution
+---
 
-Trong `~/ml-air/.env`:
+## A. Controller (182) — `~/ml-air`
+
+### A.1 `.env`
 
 ```bash
 ML_AIR_TASK_EXECUTION_MODE=external
 ML_AIR_TASK_LEASE_SECONDS=300
+MLAIR_IMAGE=ml-air-cv:latest   # sau bước A.2 — KHÔNG mlair rebuild với tag này
 ```
+
+### A.2 Image MLAir + plugin YOLO
 
 ```bash
 cd ~/ml-air
-mlair rebuild
-```
+mlair build                    # image gốc ml-air:latest
 
-### 1.2 Cài plugin contract `cv_yolo_*` trên controller
-
-Hub cần validate pipeline — image `ml-air:latest` thuần **chưa có** plugin YOLO. Build image derived từ repo YOLO:
-
-```bash
-cd ~/YOLOv8-DeepSORT-Streamlit   # clone cùng VM hoặc copy repo
+cd ~/YOLOv8-DeepSORT-Streamlit
 docker build -f Dockerfile.mlair-cv -t ml-air-cv:latest \
   --build-arg MLAIR_BASE_IMAGE=ml-air:latest .
+
+cd ~/ml-air
+mlair start                    # chỉ start, không rebuild
+mlair health
 ```
 
-Trên controller `~/ml-air/.env`:
+### A.3 Tenant / project
 
-```bash
-MLAIR_IMAGE=ml-air-cv:latest
-```
-
-```bash
-cd ~/ml-air && mlair rebuild
-```
-
-### 1.3 Tenant / project (đã có)
-
-```bash
-# yolo / yoloVN — verify
-curl -sS -H "Authorization: Bearer $TOKEN" \
-  "$API/v1/tenants/yolo/projects" | jq .
-```
-
-Hub: chọn scope **yolo / yoloVN**.
+Hub → đăng ký scope **yolo / yoloVN** (hoặc dùng script bootstrap sau).
 
 ---
 
-## Bước 2 — Token cho worker
+## B. Worker token — Service Account (bắt buộc)
 
-Trên máy reach được controller:
-
-```bash
-cd YOLOv8-DeepSORT-Streamlit
-MLAIR_URL=http://192.168.120.182:8080 \
-MLAIR_ADMIN_PASSWORD='...' \
-  ./scripts/provision-cv-token.sh
-# → copy CV_MLAIR_TOKEN=... vào .env worker
-```
-
-*(Tuỳ chọn production: tạo Service Account trong Hub → Identity với `tasks:lease`, scope `yolo` / `yoloVN`.)*
-
----
-
-## Bước 3 — Deploy worker VM
+**Không dùng PAT admin** cho worker (`tenant default` → lease rỗng).
 
 ```bash
-git clone <yolo-repo> ~/YOLOv8-DeepSORT-Streamlit
 cd ~/YOLOv8-DeepSORT-Streamlit
+MLAIR_URL=http://<IP-182>:8080 \
+MLAIR_ADMIN_PASSWORD='...' \
+CV_MLAIR_TENANT=yolo \
+CV_MLAIR_PROJECT=yoloVN \
+  ./scripts/provision-worker-sa.sh
+# → CV_MLAIR_TOKEN=...
+```
 
+---
+
+## C. Worker (184) — `~/YOLOv8-DeepSORT-Streamlit`
+
+### C.1 `.env`
+
+```bash
 cp .env.worker-external.example .env
-# Sửa: MLAIR_CONTROLLER_URL, CV_MLAIR_TOKEN, CV_MLAIR_TENANT, CV_MLAIR_PROJECT
-
-docker compose -f compose.worker-external.yaml build
-docker compose -f compose.worker-external.yaml up -d
+# Sửa: MLAIR_CONTROLLER_URL, CV_MLAIR_TOKEN (SA ở trên)
 ```
 
-GPU:
+### C.2 Weights local (train không cần copy volume từ 182)
+
+Tên thư mục **khớp tên model trên Hub** (vd. `yolov8n`):
 
 ```bash
-# .env
-COMPOSE_FILE=compose.worker-external.yaml:docker-compose.gpu.yml
-CV_WORKER_IMAGE=cv-lifecycle-workload:gpu
-CV_MLAIR_TRAIN_DEVICE=auto
+mkdir -p weights/detection/yolov8n/base
+# COCO pretrained hoặc checkpoint của bạn:
+# weights/detection/yolov8n/base/weights.pt
 ```
 
-### Bootstrap pipeline + models
+Hoặc bootstrap qua cv-api sau khi stack lên:
 
 ```bash
+curl -X POST http://127.0.0.1:8000/api/v1/registry/models/bootstrap
+```
+
+### C.3 Up stack
+
+```bash
+docker compose -f compose.worker-external.yaml -p mlair-cv-worker build
+docker compose -f compose.worker-external.yaml -p mlair-cv-worker up -d
 ./scripts/bootstrap-external-controller.sh
 ```
 
-### Verify worker lease
+### C.4 Verify
 
 ```bash
 docker logs -f mlair-cv-train-worker
-# Kỳ vọng: cv_yolo_* worker started id=...
+# leased task_id=... plugin=cv_yolo_split
 ```
 
-Trên controller — task `QUEUED` → `RUNNING` khi trigger pipeline từ Hub.
+Lease test (token SA):
+
+```bash
+docker exec mlair-cv-train-worker python3 -c "
+import os,json,urllib.request
+b=os.environ['MLAIR_API_BASE_URL'].rstrip('/')
+t=os.environ['MLAIR_WORKER_TOKEN']
+req=urllib.request.Request(b+'/v1/tasks/lease',
+  data=json.dumps({'worker_id':'probe','capabilities':['cv_yolo_split'],'max_tasks':1}).encode(),
+  method='POST',headers={'Content-Type':'application/json','Authorization':'Bearer '+t})
+print(urllib.request.urlopen(req,timeout=15).read().decode())
+"
+```
 
 ---
 
-## Bước 4 — Artifact sharing (khuyến nghị)
+## D. Train end-to-end
 
-Worker và controller cần đọc cùng dataset/model artifacts khi train:
-
-| Cách | Ghi chú |
-|------|---------|
-| **NFS** | Export volume `mlair_dataset_artifacts` / `mlair_model_artifacts` từ controller, mount trên worker |
-| **API only** | `CV_MLAIR_PERSIST_INGEST_FRAMES=0` (mặc định) — frame qua `cv-api` HTTP + job volume chung trên worker |
-
-Dev nhanh (1 VM): dùng full stack `compose.yaml` (MLAir embedded).
+1. Import dataset (≥50 ảnh) — Hub hoặc `curl` cv-api `:8000/api/v1/datasets/import-zip`
+2. Hub scope **yolo / yoloVN** → **Train**
+3. Worker log: `complete ... cv_yolo_train`
 
 ---
 
-## Checklist lỗi thường gặp
+## Checklist lỗi
 
 | Triệu chứng | Fix |
 |-------------|-----|
-| Worker `api_not_external_mode` | Controller: `ML_AIR_TASK_EXECUTION_MODE=external` + restart |
-| `401` lease | `CV_MLAIR_TOKEN` sai/hết hạn — chạy lại `provision-cv-token.sh` |
-| Pipeline không tạo được | Controller thiếu `ml-air-cv` image — bước 1.2 |
-| Task `QUEUED` mãi | Worker down hoặc `MLAIR_CAPABILITIES` không khớp plugin |
-| Hub scope sai | Chọn **yolo / yoloVN** trên controller |
+| `tasks: []` khi lease | SA scope `yolo/yoloVN`, không dùng PAT admin |
+| `PLUGIN_NOT_FOUND` | Build `ml-air-cv`, `mlair start` (không rebuild đè tag cv) |
+| `artifact not found` (train) | `weights/detection/{hub_model_name}/base/weights.pt` trên 184 |
+| `api_not_external_mode` | `ML_AIR_TASK_EXECUTION_MODE=external` trên 182 |
 
 ---
 
-## Port summary
+## Scope / project mới
+
+- **Train trên Hub:** admin (hoặc user có quyền) — không cần SA mới.
+- **Worker lease:** cập nhật scope SA hoặc tạo SA mới + `CV_MLAIR_TOKEN`.
+- **Weights:** thêm `weights/detection/{tên_model_mới}/base/weights.pt` trên worker.
+
+---
+
+## Ports
 
 | VM | Service | Port |
 |----|---------|------|
-| Controller | MLAir Hub/API | 8080 |
+| Controller | MLAir | 8080 |
 | Worker | cv-api | 8000 |
-| Worker | cv-ui (Streamlit) | 8501 |
+| Worker | cv-ui | 8501 |

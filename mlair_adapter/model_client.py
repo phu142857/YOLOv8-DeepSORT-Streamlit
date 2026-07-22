@@ -9,6 +9,10 @@ from urllib.parse import urlparse
 
 import httpx
 
+from mlair_adapter.artifact_resolve import (
+    resolve_local_weights_for_hub_model,
+    resolve_local_weights_from_artifact_uri,
+)
 from mlair_adapter.base_client import MLAirClient, items_from_response
 from shared.settings import settings
 from shared.weights_catalog import find_weights_in_dir
@@ -158,9 +162,19 @@ class ModelClient(MLAirClient):
                     if weights is not None:
                         return weights
 
+        local = resolve_local_weights_from_artifact_uri(artifact_uri)
+        if local is not None:
+            logger.info(
+                "artifact local fallback: %s -> %s (weights/detection on worker)",
+                artifact_uri,
+                local,
+            )
+            return local
+
         raise FileNotFoundError(
             f"artifact not found: {artifact_uri}. "
-            f"Mount MLAir model artifacts at {mount} (see docker-compose ml_air_model_artifacts)."
+            f"Mount MLAir model artifacts at {mount}, or place weights under "
+            f"{settings.detection_model_dir}/{{model}}/base/weights.pt on the worker."
         )
 
     def download_artifact(self, artifact_uri: str, dest: Path) -> Path:

@@ -26,12 +26,13 @@ if [[ -n "$TOKEN" ]]; then
   curl -sf -X POST "${CV_API_URL}/api/v1/registry/pipeline/bootstrap" | python3 -m json.tool
 
   echo "==> Reload plugins on controller"
-  curl -sf -X POST "${MLAIR_URL}/v1/tenants/${TENANT}/projects/${PROJECT}/plugins/reload" \
+  curl -sf -X POST "${MLAIR_URL}/v1/plugins/reload" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H 'Content-Type: application/json' \
     -d '{}' && echo "plugins reload ok"
 else
   echo "WARN: CV_MLAIR_TOKEN empty — skip pipeline bootstrap / plugin reload" >&2
+  echo "      Run: MLAIR_URL=... ./scripts/provision-worker-sa.sh" >&2
 fi
 
 echo "==> Done. Hub scope: ${TENANT}/${PROJECT} @ ${MLAIR_URL}"

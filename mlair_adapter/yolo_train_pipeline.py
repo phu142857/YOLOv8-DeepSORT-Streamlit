@@ -31,6 +31,7 @@ from shared.model_resolve import (
     parse_model_spec,
     registry_model_id,
     resolve_model_path,
+    resolve_train_weights_for_hub_model,
 )
 from shared.weights_catalog import PRETRAINED_VERSION, find_weights_in_dir, version_dir
 from shared.settings import settings
@@ -190,6 +191,17 @@ def _detection_contiguous_class_id(det: dict[str, Any]) -> int | None:
 def _resolve_base_weights(context: dict[str, Any]) -> Path:
     artifact_uri = str(context.get("artifact_uri") or "").strip()
     model_id = str(context.get("model_id") or context.get("mlair_model_id") or "").strip()
+
+    if model_id:
+        try:
+            return resolve_train_weights_for_hub_model(
+                model_id,
+                artifact_uri=artifact_uri or None,
+                stage=settings.mlair_promote_stage,
+            )
+        except FileNotFoundError:
+            if not (artifact_uri.startswith("file://") or artifact_uri.startswith("/")):
+                raise
 
     if artifact_uri.startswith("file://") or artifact_uri.startswith("/"):
         client = ModelClient()
