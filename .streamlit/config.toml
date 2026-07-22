@@ -1,6 +1,6 @@
 [server]
 # Match CV_DATASET_ZIP_MAX_MB (in MB). Streamlit default is 200MB.
-maxUploadSize = 10240
+maxUploadSize = 102400
 # Local: serve at http://localhost:8501/
 # AWS/EKS: --server.baseUrlPath=/cv in compose/Helm (ALB path prefix).
 enableCORS = false
